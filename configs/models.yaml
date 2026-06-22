@@ -5,8 +5,8 @@
 fireworks:
   base_url: "https://api.fireworks.ai/inference/v1"
   api_key_env: "FIREWORKS_API_KEY"   # value read from env; NEVER hardcode here
-  timeout_s: 120
-  max_retries: 4
+  timeout_s: 180                      # reasoning models can be slow; retry on timeout
+  max_retries: 6
   max_concurrency: 8                  # parallel in-flight requests across the pool
 
 pool:

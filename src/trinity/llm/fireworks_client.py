@@ -111,12 +111,17 @@ class FireworksPool:
         )
         async def _do(cli: httpx.AsyncClient) -> ChatResult:
             async with self._sem:
-                resp = await cli.post(
-                    f"{self.base_url}/chat/completions",
-                    headers=self._headers,
-                    json=payload,
-                    timeout=self.timeout_s,
-                )
+                try:
+                    resp = await cli.post(
+                        f"{self.base_url}/chat/completions",
+                        headers=self._headers,
+                        json=payload,
+                        timeout=self.timeout_s,
+                    )
+                except (httpx.TimeoutException, httpx.TransportError) as exc:
+                    # Network timeouts / connection resets are transient — retry them
+                    # (a long training run makes thousands of calls; blips are normal).
+                    raise _Retryable(f"network: {type(exc).__name__}: {exc}") from exc
             if resp.status_code in (429, 500, 502, 503, 504):
                 raise _Retryable(f"HTTP {resp.status_code}: {resp.text[:200]}")
             resp.raise_for_status()

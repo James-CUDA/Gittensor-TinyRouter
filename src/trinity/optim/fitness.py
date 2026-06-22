@@ -44,23 +44,37 @@ async def evaluate_candidate(
         except Exception:
             client = None
     try:
+        # return_exceptions=True so one trajectory that exhausts retries (e.g. a
+        # persistent timeout) degrades to reward 0 instead of crashing the whole
+        # training run. The optimizer treats it as a (slightly pessimistic) sample.
         trajs = await asyncio.gather(
             *[
                 run_trajectory(task, policy, pool, pool_models, sample=sample, client=client, **run_kwargs)
                 for task in minibatch
-            ]
+            ],
+            return_exceptions=True,
         )
     finally:
         if own_client and client is not None:
             await client.aclose()
 
     rewards = []
+    good_trajs = []
+    n_failed = 0
     for t in trajs:
+        if isinstance(t, BaseException):
+            n_failed += 1
+            rewards.append(0.0)
+            continue
         r = float(_reward.score(t))
         t.reward = r
         rewards.append(r)
+        good_trajs.append(t)
+    if n_failed:
+        print(f"      [warn] {n_failed}/{len(trajs)} trajectories failed (counted as reward 0)",
+              flush=True)
     fit = float(mean(rewards)) if rewards else 0.0
-    return (fit, list(trajs)) if return_trajectories else (fit, [])
+    return (fit, good_trajs) if return_trajectories else (fit, [])
 
 
 async def evaluate_population(

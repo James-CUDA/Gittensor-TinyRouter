@@ -18,6 +18,36 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-06-22 — Pilot #2 (CRN): J climbs, then crashes on httpx.ReadTimeout  #repro #mistake #finding
+
+**Result (the headline so far):** with common random numbers, **sep-CMA-ES learns** — clean upward J:
+
+```
+gen0 mean=0.141 best=0.375    gen1 mean=0.203 best=0.375    gen2 mean=0.438 best=0.625
+```
+
+Mean fitness tripled and best improved 0.375→0.625 in 3 generations on math500 — the core
+replication claim (the trained coordinator improves over evolution) is demonstrated in principle.
+`best_theta.npy` + `history.json` saved each generation, so gen-2's θ (fitness 0.625) survived.
+
+**#mistake — run crashed at gen 3 on `httpx.ReadTimeout`.** My Fireworks client retried only on HTTP
+status codes (429/5xx), not on network timeouts / transport errors, so one slow reasoning call (>120s)
+raised an uncaught `ReadTimeout` that propagated through `asyncio.gather` and killed the whole run.
+(The `python | tee` pipeline masked it as exit 0 — `tee` succeeded even though python died.)
+
+**Fixes (#decision):**
+1. `FireworksPool.chat` now catches `httpx.TimeoutException`/`TransportError` and retries them
+   (transient blips are normal over thousands of calls). Timeout 120→180s, retries 4→6.
+2. `evaluate_candidate` uses `gather(return_exceptions=True)` — a trajectory that exhausts retries
+   degrades to **reward 0** and logs a warning, instead of crashing the generation/run.
+3. Next run uses `nohup` (survives an ssh drop) and a relative log path (the earlier detach failures
+   were `\$HOME` quoting bugs across the ssh boundary, not nohup itself).
+
+**Lesson:** a long API-bound training loop must treat transient network errors as expected, not fatal.
+CPU smoke ladder still 4/4 green after the fixes.
+
+---
+
 ## 2026-06-22 — Pilot #1: flat J → root cause = per-candidate minibatch noise → CRN fix  #mistake #finding #decision
 
 **Context:** First real pilot (math500, λ=6, m_cma=4, 12 gens). Ran clean across 5 generations on
