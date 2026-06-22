@@ -408,3 +408,17 @@ TRINITY jumped 0.55→**0.95**, now a statistical tie with the best single model
 
 **Status:** strong math coordinators at 13/14; re-evaluating math with the fixed extraction to finalize
 the table. Exact ledger cost so far ~$1.3 (evals); total spend ~$13.
+
+---
+
+## 2026-06-23 — Structured results + rigorous eval launched  #decision #repro
+
+Per user request (document everything + structured output):
+- `scripts/results_table.py` aggregates all `experiments/**/eval*.json` → structured Markdown table +
+  `experiments/results.json` (machine-readable). `docs/RESULTS.md` is the human report (linked from README).
+- Current aggregated verdict (40-item evals): **R1/R2 ✅ 0.750>0.639, R4 ✅ 0.750>0.558**, with caveats:
+  math seed variance (math_s0 failed at 0.325), n=40 eval noise (single baselines swing 0.45–0.70).
+- **Rigorous eval running** (GPU5): n=120, single baselines ×3 reps (kills reasoning-model
+  nondeterminism), best math (full_pilot) + best MMLU (mmlu_s1) coordinators → definitive numbers.
+- Cost ~$22 (ledger-tracked). No GPU was empty (other tenants), but evals are light (~4 GB) so they
+  coexist on a shared H200.
