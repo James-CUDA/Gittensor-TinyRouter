@@ -309,3 +309,27 @@ not needed.
 **Fix / decision:** Probe model IDs directly with a tiny `chat/completions` call instead. All
 three target IDs returned 200, so we hardcode them in `configs/models.yaml`. Do **not** depend
 on the list endpoint.
+
+---
+
+## 2026-06-23 — Parallel multi-seed training across free GPUs  #decision #repro
+
+**Context:** User cleared use of all free GPUs (1,4,6,7); GPU 5 keeps its run. Launched stronger
+coordinators with seed replicates for an error-barred multi-task result.
+
+| GPU | run | task | seed | config |
+|---|---|---|---|---|
+| 1 | math_s0 | math500 | 0 | λ8, m_cma10, T14, 4 turns, 768 tok, 80 items |
+| 4 | math_s1 | math500 | 1 | same |
+| 5 | mmlu_pilot | mmlu | — | basic (earlier run, still finishing) |
+| 6 | mmlu_s0 | mmlu | 0 | strong |
+| 7 | mmlu_s1 | mmlu | 1 | strong |
+
+**Caveat (#finding):** workload is **API-bound, not GPU-bound** (GPUs idle ~0% util waiting on
+Fireworks). 5 parallel processes share the Fireworks rate limit → ~40 concurrent calls; 429s are
+retried (robustness fix), so throughput is shared, not 5×. Real benchmarks limited to math500 + mmlu
+(gpqa gated, livecodebench loader → toy fallback; both need extra work to enable real data).
+
+**Plan:** when all finish, eval each coordinator on its held-out test set, then report
+TRINITY-per-task (mean±std over seeds) vs best single fixed model on the math+mmlu average = the R1/R2
+headline test.
