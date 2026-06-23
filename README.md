@@ -1,28 +1,90 @@
-# TRINITY (open-source replication)
+# TRINITY: a tiny LLM router
 
-A from-scratch replication of **TRINITY: An Evolved LLM Coordinator** (Xu et al., Sakana AI,
-ICLR 2026 — [arXiv:2512.04695](https://arxiv.org/abs/2512.04695)), using **open-source models**
-served via Fireworks AI as the coordinated LLM pool.
+We built a small **coordinator** that, for every question, decides two things: **which** of three
+open-source LLMs should answer it, and **what role** that model should play (Thinker, Worker, or
+Verifier). The coordinator is deliberately tiny and cheap. A frozen **0.6B** encoder reads the
+question into a single vector, and a **~10K-parameter** head turns that vector into the routing
+decision. It is trained by **separable CMA-ES**, a derivative-free evolution strategy, against a simple
+right/wrong reward. The coordinator never solves the question itself; it only learns who to ask.
 
-A tiny coordinator (a **~0.6B** language model whose hidden states encode the query + a
-**~10K-parameter** head trained with **separable CMA-ES**) decides, each turn, **which** LLM to
-call and **what role** to give it — **Thinker**, **Worker**, or **Verifier** — so the small
-coordinator never has to learn the hard skills itself.
+The method follows TRINITY (Xu et al., ICLR 2026, [arXiv:2512.04695](https://arxiv.org/abs/2512.04695)),
+rebuilt from scratch with an all open-source model pool served through Fireworks AI.
 
-> **Start here:** [`AGENTS.md`](AGENTS.md) — goal, environment rules, and the logging protocol.
-> Implementation detail lives in [`docs/SPEC.md`](docs/SPEC.md). The lab notebook (mistakes &
-> findings) is [`docs/JOURNAL.md`](docs/JOURNAL.md).
+## What we did
+
+- Implemented the full coordinator: the 0.6B encoder feature, the ~10K routing head, the three roles,
+  the multi-turn loop (up to 5 turns, terminated by a Verifier accept), and the sep-CMA-ES trainer.
+- Wired a 3-model open-source pool plus an automatic grader (exact-match for math, letter-match for
+  MMLU) that produces the binary reward.
+- Trained per-task coordinators by evolution: breed thousands of candidate heads, keep the ones that
+  route best, repeat.
+- Evaluated rigorously on 120 held-out questions, with every single-model baseline averaged over 3 runs
+  to remove run-to-run noise, against each model alone and against random routing.
+- Tracked every dollar of API spend and logged each result.
 
 ## Model pool
 
-| Slot | Fireworks model ID                          |
-| ---- | ------------------------------------------- |
-| A    | `accounts/fireworks/models/deepseek-v4-pro` |
-| B    | `accounts/fireworks/models/glm-5p2`         |
-| C    | `accounts/fireworks/models/kimi-k2p6`       |
+| Slot | Fireworks model ID                          | Strong at |
+| ---- | ------------------------------------------- | --------- |
+| A    | `accounts/fireworks/models/deepseek-v4-pro` | knowledge (MMLU) |
+| B    | `accounts/fireworks/models/glm-5p2`         | math |
+| C    | `accounts/fireworks/models/kimi-k2p6`       | general |
 
-The 0.6B coordinator encoder and the CMA-ES loop run on a single **NVIDIA H200 (GPU 5)**; the
-three LLMs are called over HTTP.
+The 0.6B encoder and the evolution loop run on a single NVIDIA H200; the three LLMs are called over HTTP.
+
+## How it works
+
+1. The frozen 0.6B encoder turns the question into one 1024-dim vector.
+2. The ~10K head reads that vector and picks a model and a role.
+3. The chosen model answers in that role; its output is appended to the transcript.
+4. Steps 1 to 3 repeat for up to 5 turns; a Verifier turn can accept and stop early.
+5. The final answer is graded right/wrong, and that reward drives the evolutionary training.
+
+## Results
+
+Rigorous eval: 120 held-out questions per task; single-model baselines are the mean over 3 runs.
+Scores are fraction correct (0.792 = 79.2%).
+
+**Math**
+
+| system | score |
+| --- | --- |
+| glm-5p2 | 0.794 (best single) |
+| **TRINITY (router)** | **0.792** |
+| random routing | 0.792 |
+| deepseek-v4-pro | 0.747 |
+| kimi-k2p6 | 0.742 |
+
+**MMLU**
+
+| system | score |
+| --- | --- |
+| **TRINITY (router)** | **0.925** |
+| deepseek-v4-pro | 0.922 (best single) |
+| random routing | 0.875 |
+| glm-5p2 | 0.783 |
+| kimi-k2p6 | 0.539 |
+
+**Both tasks together**
+
+| system | math | MMLU | average |
+| --- | --- | --- | --- |
+| **TRINITY (router)** | 0.792 | **0.925** | **0.858** |
+| deepseek-v4-pro | 0.747 | 0.922 | 0.835 |
+| random routing | 0.792 | 0.875 | 0.833 |
+| glm-5p2 | 0.794 | 0.783 | 0.789 |
+| kimi-k2p6 | 0.742 | 0.539 | 0.640 |
+
+### What the numbers say
+
+The tiny router scores **0.858 on average, higher than any single model**. No single model is good at
+both tasks: deepseek is the knowledge specialist, glm is the math specialist. The router wins the
+average by sending each task to the right specialist.
+
+Reading it honestly: the win is **across tasks, not within a task**. On MMLU, where the models differ a
+lot (0.54 to 0.92), routing clearly helps and the router beats random (0.925 vs 0.875). On math, where
+all three models sit around 0.79, there is nothing to route around, so the router ties both the best
+model and random routing. Routing pays off when the models genuinely differ.
 
 ## Setup
 
@@ -38,21 +100,23 @@ uv pip install -e .
 python -m trinity.llm.fireworks_client --selftest
 ```
 
-## Security
+## Run
 
-No secret ever lives in this repo. SSH key → `~/.ssh/trinity_gpu`; Fireworks key →
-`~/.config/trinity/secrets.env`. See [`AGENTS.md`](AGENTS.md) §4.
+```bash
+source ~/.config/trinity/secrets.env
+# train a per-task coordinator on the GPU
+bash scripts/run_remote.sh train --benchmark math500
+# rigorous eval (120 items, baselines averaged over 3 runs)
+python -m trinity.eval --benchmark math500 \
+    --theta experiments/math500/full_pilot/best_theta.npy \
+    --max-items 120 --single-reps 3 --out experiments/final/math_rigorous.json
+python scripts/cost_report.py --ledger cost_ledger.jsonl   # spend
+```
 
-## Results
+Secrets never live in this repo: the SSH key sits in `~/.ssh/`, the Fireworks key in
+`~/.config/trinity/secrets.env`.
 
-**[`docs/RESULTS.md`](docs/RESULTS.md)** — structured scorecard. Headline (rigorous, n=120, baselines
-averaged ×3 reps): on the multi-task average TRINITY (**0.858**) beats every fixed single model (best
-0.835) and random routing (0.833), so R1/R2 and R4 hold — but **thinly, and cross-task**. The win comes
-from picking the right specialist per benchmark: TRINITY clearly beats random on MMLU (0.925 vs 0.875),
-while on math all three models cluster at ~0.79 and routing adds nothing over random (an honest null).
-Cost tracked via `scripts/cost_report.py` (**$20.89** total).
+## Cost
 
-## Status
-
-Trained + evaluated on math500 + MMLU. Full lab log (every mistake/fix/decision) in
-[`docs/JOURNAL.md`](docs/JOURNAL.md).
+**$20.89** total, exact from the token ledger at real Fireworks prices (deepseek $6.56, glm $6.70,
+kimi $7.64), well under the ~$65 we projected.
