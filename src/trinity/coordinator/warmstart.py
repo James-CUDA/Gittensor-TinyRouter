@@ -194,11 +194,15 @@ def encode_queries(prompts, *, model_name, device="cuda:0", dtype="bfloat16",
     Imports torch + the CoordinatorEncoder lazily so this module stays import-clean
     on a torch-free box. Runs on the GPU for the actual warm-start; the returned
     array is what :func:`fit_agent_head` consumes (cache it to .npy on the box).
+
+    ``target_layer`` is accepted for caller compatibility but NOT passed to the
+    encoder: CoordinatorEncoder reads a fixed penultimate-token hidden state (the
+    layer-26 ``target_layer`` is the SVF adapter's concern, not the feature's).
     """
     from .slm import CoordinatorEncoder  # lazy: pulls torch only when actually encoding
 
     enc = CoordinatorEncoder(model_name=model_name, device=device, dtype=dtype,
-                             target_layer=target_layer, l2_normalize=l2_normalize)
+                             l2_normalize=l2_normalize)
     feats = []
     for q in prompts:
         text = (instruction + q) if instruction else q
