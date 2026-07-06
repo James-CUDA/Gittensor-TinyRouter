@@ -131,3 +131,22 @@ Tracked exactly from the token ledgers at real Fireworks prices:
 - Core replication and rigorous eval: **$20.89** (deepseek $6.56, glm $6.70, kimi $7.64).
 - Oracle-ceiling diagnostic: **~$14**.
 - Warm-start + shaped-fitness experiment (label collection, retrain, eval): **$27.22**.
+
+## Compete (earn TAO)
+
+TinyRouter is a **routing accuracy competition** on [Gittensor](https://github.com/entrius/gittensor)
+(Bittensor Subnet 74). Train a routing head that beats the current best accuracy on
+the hidden benchmark, and your PR gets merged — earning you TAO.
+
+```
+  1. TRAIN        2. PACK           3. SUBMIT         4. EARN
+  CMA-ES on GPU   extract head      open a PR to      PR merged →
+  ~$25-65/run     + SVF + receipt   this repo         TAO via Gittensor
+```
+
+**Current leaders:** see [leaderboard.json](leaderboard.json)
+**How to compete:** read [SUBMITTING.md](SUBMITTING.md)
+**Rules:** [CONTRIBUTING.md](CONTRIBUTING.md)
+
+Only accuracy-improving heads are merged. The hidden benchmark is never revealed.
+General contributions (docs, fixes) are welcome but earn no TAO.

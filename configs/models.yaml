@@ -1,6 +1,17 @@
 # The coordinated LLM pool (open-source, served by Fireworks AI).
 # Roles are assigned dynamically by the coordinator at runtime; this file only
 # declares which models exist and their per-call defaults.
+#
+# ===== Adding a new model =====
+# 1. Add a new entry under `pool:` with a short `name` and the full Fireworks `id`.
+# 2. Add pricing to the PRICES dict in scripts/cost_report.py.
+# 3. Run the selftest: python -m trinity.llm.fireworks_client --selftest
+# 4. Update the model pool table in README.md.
+# 5. The coordinator head dimension (n_a = L + 3) will auto-adjust from pool size.
+#
+# Example:
+#   - name: claude-opus-4-8
+#     id: "accounts/fireworks/models/claude-opus-4-8"
 
 fireworks:
   base_url: "https://api.fireworks.ai/inference/v1"

@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TinyRouter — King of the Hill</title>
+<style>
+  :root {
+    --bg: #0d1117; --fg: #c9d1d9; --border: #30363d;
+    --accent: #58a6ff; --green: #3fb950; --red: #f85149;
+    --yellow: #d2991d; --card-bg: #161b22;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg); color: var(--fg);
+    max-width: 1000px; margin: 0 auto; padding: 2rem;
+  }
+  h1 { font-size: 1.5rem; }
+  .subtitle { color: #8b949e; margin-bottom: 2rem; }
+  .crown { font-size: 2rem; }
+
+  .koth-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1.5rem; margin-bottom: 2rem;
+  }
+  .koth-card {
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1.5rem;
+  }
+  .koth-card.winner { border-color: var(--yellow); }
+  .koth-card h2 { font-size: 1rem; margin-bottom: 1rem; }
+  .koth-card .score {
+    font-size: 2.5rem; font-weight: 700;
+    background: linear-gradient(135deg, var(--yellow), #f0a030);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .koth-card .miner { font-size: 0.9rem; color: #8b949e; margin-top: 0.25rem; }
+  .koth-card .stat-row {
+    display: flex; justify-content: space-between;
+    padding: 0.4rem 0; border-bottom: 1px solid var(--border);
+    font-size: 0.85rem;
+  }
+  .koth-card .stat-row:last-child { border-bottom: none; }
+
+  table {
+    width: 100%; border-collapse: collapse;
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-radius: 8px; overflow: hidden; margin-bottom: 1.5rem;
+  }
+  th, td { padding: 0.6rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
+  th { font-size: 0.7rem; text-transform: uppercase; color: #8b949e; background: #0d1117; }
+  .merged { color: var(--green); }
+  .rejected { color: var(--red); }
+  .note { font-size: 0.75rem; color: #8b949e; margin-top: 1.5rem; text-align: center; }
+  a { color: var(--accent); }
+  .howto {
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 1.5rem; margin-bottom: 2rem;
+  }
+  .howto h3 { margin-bottom: 0.75rem; }
+  .howto ol { margin-left: 1.5rem; line-height: 1.8; }
+  code { background: #21262d; padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.85em; }
+</style>
+</head>
+<body>
+<h1>&#x1F451; TinyRouter — King of the Hill</h1>
+<p class="subtitle">Routing accuracy competition. Beat the current best, earn TAO via Gittensor.</p>
+
+<div id="app">
+  <div class="howto">
+    <h3>&#x1F3C6; How to compete</h3>
+    <ol>
+      <li><strong>Train</strong> a routing head: <code>python -m trinity.train --benchmark math500</code></li>
+      <li><strong>Pack</strong> your submission: <code>python scripts/pack_submission.py --run-dir ... --miner-name you</code></li>
+      <li><strong>Submit</strong> a PR to this repo with your head weights + receipt</li>
+      <li><strong>Win</strong>: if your head beats the current best, your PR is merged → TAO</li>
+    </ol>
+    <p style="margin-top:0.75rem;font-size:0.85rem;">
+      Full guide: <a href="../SUBMITTING.md">SUBMITTING.md</a> &nbsp;|&nbsp;
+      Rules: <a href="../CONTRIBUTING.md">CONTRIBUTING.md</a>
+    </p>
+  </div>
+
+  <div class="koth-grid" id="kings"></div>
+
+  <h2 style="margin-bottom:0.75rem;">Submission History</h2>
+  <table id="history-table">
+    <thead><tr>
+      <th>Miner</th><th>Gen</th><th>Benchmark</th><th>Score</th><th>Δ vs Best</th><th>PR</th><th>Result</th>
+    </tr></thead>
+    <tbody id="history-body"></tbody>
+  </table>
+
+  <p class="note">
+    Scores computed on a hidden benchmark (never revealed). &nbsp;|&nbsp;
+    <a href="../leaderboard.json">leaderboard.json</a>
+  </p>
+</div>
+
+<script>
+async function load() {
+  try {
+    const resp = await fetch('../leaderboard.json');
+    const data = await resp.json();
+    render(data);
+  } catch (e) {
+    document.getElementById('app').innerHTML =
+      '<p style="color:var(--red);">Unable to load leaderboard data.</p>';
+  }
+}
+
+function render(data) {
+  const benches = data.benchmarks || {};
+  const kingsDiv = document.getElementById('kings');
+  let allHistory = [];
+
+  for (const [name, b] of Object.entries(benches)) {
+    const isWinner = b.best_score > (b.baseline_random || 0);
+    kingsDiv.innerHTML += `
+      <div class="koth-card ${isWinner ? 'winner' : ''}">
+        <h2>${name} ${isWinner ? '&#x1F451' : ''}</h2>
+        <div class="score">${(b.best_score * 100).toFixed(1)}%</div>
+        <div class="miner">King: <strong>${b.best_miner || '—'}</strong> gen ${b.best_generation || '—'}</div>
+        <div style="margin-top:1rem;">
+          <div class="stat-row"><span>Best single model</span><span>${(b.best_single_model * 100).toFixed(1)}%</span></div>
+          <div class="stat-row"><span>Random routing</span><span>${(b.baseline_random * 100).toFixed(1)}%</span></div>
+          <div class="stat-row"><span>Oracle ceiling</span><span>${(b.oracle_ceiling * 100).toFixed(1)}%</span></div>
+          <div class="stat-row"><span>Headroom</span><span>${((b.oracle_ceiling - b.best_score) * 100).toFixed(1)}%</span></div>
+        </div>
+      </div>`;
+
+    for (const h of (b.history || [])) {
+      allHistory.push({...h, benchmark: name});
+    }
+  }
+
+  allHistory.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+  const tbody = document.getElementById('history-body');
+  if (allHistory.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#8b949e;">No submissions yet — be the first!</td></tr>';
+  } else {
+    tbody.innerHTML = allHistory.map(h => `
+      <tr>
+        <td>${h.miner}</td>
+        <td>${h.generation}</td>
+        <td>${h.benchmark}</td>
+        <td>${(h.score * 100).toFixed(1)}%</td>
+        <td>—</td>
+        <td>#${h.pr || '—'}</td>
+        <td class="${h.merged ? 'merged' : 'rejected'}">${h.merged ? 'MERGED' : 'rejected'}</td>
+      </tr>`).join('');
+  }
+}
+
+load();
+</script>
+</body>
+</html>

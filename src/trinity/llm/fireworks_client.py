@@ -50,17 +50,47 @@ class _Retryable(Exception):
 def _ledger_append(model: str, prompt_tokens: int, completion_tokens: int) -> None:
     """Append one token-usage record to the cost ledger, if TRINITY_COST_LEDGER is set.
 
-    Used by scripts/cost_report.py to compute exact spend. Append-only JSONL, one short
-    line per call (atomic enough for concurrent training processes). Best-effort: never
-    let cost bookkeeping break an inference call.
+    Each entry includes a hash-chain link ``h`` = sha256(prev_hash + entry_data).
+    This makes the ledger append-only and tamper-evident: any modification or
+    deletion of a line breaks the chain, and ``scripts/cost_report.py`` verifies
+    it before reporting totals.
+
+    Used by scripts/cost_report.py to compute exact spend. Append-only JSONL,
+    one short line per call (atomic enough for concurrent training processes).
+    Best-effort: never let cost bookkeeping break an inference call.
     """
+    import hashlib
+
     path = os.environ.get("TRINITY_COST_LEDGER")
     if not path:
         return
     try:
         short = model.rsplit("/", 1)[-1]
+        pt = int(prompt_tokens)
+        ct = int(completion_tokens)
+
+        # Read the previous hash (last line's "h" field).
+        prev_hash = ""
+        try:
+            with open(path, "r") as fh:
+                last = None
+                for line in fh:
+                    line = line.strip()
+                    if line:
+                        last = line
+                if last is not None:
+                    import json as _json
+                    prev = _json.loads(last)
+                    prev_hash = prev.get("h", "")
+        except (OSError, ValueError):
+            prev_hash = ""
+
+        # Build the entry payload and hash it.
+        payload = f'{{"m":"{short}","p":{pt},"c":{ct}}}'
+        h = hashlib.sha256((prev_hash + payload).encode()).hexdigest()
+
         with open(path, "a") as f:
-            f.write(f'{{"m":"{short}","p":{int(prompt_tokens)},"c":{int(completion_tokens)}}}\n')
+            f.write(f'{{"m":"{short}","p":{pt},"c":{ct},"h":"{h}"}}\n')
     except Exception:
         pass
 

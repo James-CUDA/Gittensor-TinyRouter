@@ -32,6 +32,11 @@ from .types import ROLE_ORDER, Role
 
 _REPO = Path(__file__).resolve().parents[2]
 
+# Locked reproducibility seed — committed, never changed.
+# Using a custom seed prints a warning: cherry-picking seeds to find a lucky
+# eval split undermines result trustworthiness.
+REPRODUCIBILITY_SEED: int = 42
+
 
 class RandomPolicy:
     """Random (agent, role) each turn — the R4 routing baseline (no GPU)."""
@@ -114,11 +119,24 @@ async def evaluate(args) -> dict:
     results["TRINITY"] = s_trinity
     print(f"  TRINITY (trained)        = {s_trinity:.4f}")
 
-    # --- random routing (R4) ---
-    rand = RandomPolicy(n_models, seed=args.seed)
-    s_rand = await _score_policy(tasks, rand, pool, pool_models, sample=False, **run_kwargs)
+    # --- random routing (R4) — multi-seed baseline to remove run-to-run noise ---
+    # The paper reports random routing as a single draw per run, but with
+    # small eval sets (~120 q's) the variance is large (0.733–0.792 in
+    # practice).  Reporting the mean over 100 seeds gives an honest baseline.
+    rand_seeds = max(1, args.rand_seeds)
+    rand_scores: list[float] = []
+    for s in range(rand_seeds):
+        rand = RandomPolicy(n_models, seed=args.seed * 10000 + s)
+        s_r = await _score_policy(tasks, rand, pool, pool_models, sample=False, **run_kwargs)
+        rand_scores.append(s_r)
+    s_rand = float(mean(rand_scores))
     results["random_routing"] = s_rand
-    print(f"  random routing           = {s_rand:.4f}")
+    if rand_seeds > 1:
+        rand_std = (sum((x - s_rand) ** 2 for x in rand_scores) / rand_seeds) ** 0.5
+        results["random_routing_std"] = rand_std
+        print(f"  random routing           = {s_rand:.4f} ± {rand_std:.4f}  (n={rand_seeds} seeds)")
+    else:
+        print(f"  random routing           = {s_rand:.4f}")
 
     best_single = max(results[k] for k in results if k.startswith("single::"))
     invariants = {
@@ -147,9 +165,20 @@ def main() -> None:
     ap.add_argument("--max-turns", type=int, default=5, dest="max_turns")
     ap.add_argument("--max-tokens", type=int, default=4096, dest="max_tokens")
     ap.add_argument("--reasoning", default="minimal")
-    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--seed", type=int, default=REPRODUCIBILITY_SEED,
+                    help=f"random seed (default: {REPRODUCIBILITY_SEED} — locked for reproducibility; "
+                         "overriding prints a warning)")
+    ap.add_argument("--rand-seeds", type=int, default=100, dest="rand_seeds",
+                    help="number of random seeds for the random-routing baseline (default: 100)")
     ap.add_argument("--out", default="")
     args = ap.parse_args()
+    if args.seed != REPRODUCIBILITY_SEED:
+        print(
+            f"[eval] ⚠ seed={args.seed} differs from locked REPRODUCIBILITY_SEED="
+            f"{REPRODUCIBILITY_SEED}. Non-default seeds weaken reproducibility "
+            f"and should be justified in any reported results.",
+            flush=True,
+        )
     asyncio.run(evaluate(args))
 
 

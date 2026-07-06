@@ -1,0 +1,25 @@
+{
+  "updated_at": "2026-07-07T00:00:00Z",
+  "benchmarks": {
+    "math500": {
+      "best_score": 0.817,
+      "best_miner": null,
+      "best_generation": 0,
+      "best_pr": null,
+      "baseline_random": 0.792,
+      "best_single_model": 0.817,
+      "oracle_ceiling": 0.856,
+      "history": []
+    },
+    "mmlu": {
+      "best_score": 0.922,
+      "best_miner": null,
+      "best_generation": 0,
+      "best_pr": null,
+      "baseline_random": 0.875,
+      "best_single_model": 0.922,
+      "oracle_ceiling": 0.939,
+      "history": []
+    }
+  }
+}

@@ -35,6 +35,8 @@ experiments/**/cache/
 *.pt
 *.safetensors
 *.npz
+# Exception: submission .npy files ARE committed (they are the competition artifacts)
+!submissions/**/*.npy
 *.npy
 wandb/
 data/
@@ -68,3 +70,9 @@ dist/
 .idea/
 .vscode/
 *.log
+
+# ============================================================
+#  Hidden benchmark (maintainer-only, stored OUTSIDE the repo)
+# ============================================================
+benchmark/
+tinyrouter-benchmark/
