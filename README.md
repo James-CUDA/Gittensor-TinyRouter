@@ -1,5 +1,6 @@
 # TinyRouter
 
+
 We built a small **coordinator** that, for every question, decides two things: **which** of three
 open-source LLMs should answer it, and **what role** that model should play (Thinker, Worker, or
 Verifier). The coordinator is deliberately tiny and cheap. A frozen **0.6B** encoder reads the
