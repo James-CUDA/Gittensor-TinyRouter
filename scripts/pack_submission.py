@@ -38,28 +38,29 @@ def _estimate_cost() -> float:
     if not ledger_path:
         return 0.0
     try:
-        import hashlib
+        sys.path.insert(0, str(_REPO / "scripts"))
+        from cost_report import (
+            PRICES,
+            _DEFAULT_BLENDED_IN,
+            _DEFAULT_BLENDED_OUT,
+            cost,
+            verify_ledger_chain,
+        )
+
+        valid, _, _ = verify_ledger_chain(ledger_path)
+        if not valid:
+            return 0.0
+
         total = 0.0
-        pricing = {"deepseek-v4-pro": 0.90, "glm-5p2": 0.90, "kimi-k2p6": 0.90}
-        prev_hash = ""
         with open(ledger_path) as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
                 rec = json.loads(line)
-                # Verify hash chain (skip if hash field missing — pre-chain entries)
-                expected_h = rec.pop("h", None)
-                payload = json.dumps(rec, sort_keys=True)
-                if expected_h is not None:
-                    computed_h = hashlib.sha256((prev_hash + payload).encode()).hexdigest()
-                    if computed_h == expected_h:
-                        prev_hash = computed_h
-                m = rec.get("m", "")
-                price = pricing.get(m, 0.90)
-                pt = rec.get("p", 0)
-                ct = rec.get("c", 0)
-                total += price * (pt + ct) / 1_000_000
+                m = rec.get("m", "?")
+                ir, orr = PRICES.get(m, (_DEFAULT_BLENDED_IN, _DEFAULT_BLENDED_OUT))
+                total += cost(rec.get("p", 0), rec.get("c", 0), ir, orr)
         return round(total, 4)
     except Exception:
         return 0.0

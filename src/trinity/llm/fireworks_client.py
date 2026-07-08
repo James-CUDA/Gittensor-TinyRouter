@@ -60,6 +60,7 @@ def _ledger_append(model: str, prompt_tokens: int, completion_tokens: int) -> No
     Best-effort: never let cost bookkeeping break an inference call.
     """
     import hashlib
+    import json as _json
 
     path = os.environ.get("TRINITY_COST_LEDGER")
     if not path:
@@ -79,18 +80,18 @@ def _ledger_append(model: str, prompt_tokens: int, completion_tokens: int) -> No
                     if line:
                         last = line
                 if last is not None:
-                    import json as _json
                     prev = _json.loads(last)
                     prev_hash = prev.get("h", "")
         except (OSError, ValueError):
             prev_hash = ""
 
-        # Build the entry payload and hash it.
-        payload = f'{{"m":"{short}","p":{pt},"c":{ct}}}'
+        # Must match cost_report.verify_ledger_chain payload canonicalization.
+        body = {"m": short, "p": pt, "c": ct}
+        payload = _json.dumps(body, sort_keys=True)
         h = hashlib.sha256((prev_hash + payload).encode()).hexdigest()
 
         with open(path, "a") as f:
-            f.write(f'{{"m":"{short}","p":{pt},"c":{ct},"h":"{h}"}}\n')
+            f.write(_json.dumps({**body, "h": h}, sort_keys=True) + "\n")
     except Exception:
         pass
 
