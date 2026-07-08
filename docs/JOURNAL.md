@@ -18,6 +18,33 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-07-09 — Rate-limit gate parsed UTC timestamps as local time  #mistake #finding #decision
+
+**Context:** Auditing the anti-cheat gates in `scripts/pr_eval.py`. Gate 1
+(`_check_rate_limit`) enforces "1 submission per benchmark per week" by comparing
+each leaderboard `history` entry's `timestamp` against a 7-day cutoff.
+**Expected:** the 7-day window behaves identically wherever `pr_eval.py` runs.
+**Actual:** timestamps are *written* in UTC (`time.strftime("...Z", time.gmtime())`
+in `_update_leaderboard`) but were *read back* with
+`time.mktime(time.strptime(ts, "...Z"))`. `time.mktime` interprets the struct as
+**local** time, so on a non-UTC host the parsed epoch is skewed by the host's UTC
+offset. Repro on a UTC+9 box: `2026-01-01T00:00:00Z` parsed to an epoch **9 h
+earlier** than the true instant. Near the window boundary this lets a miner east
+of UTC evade the rate limit (their prior submission reads as older than it is).
+**Root cause:** `time.mktime` is the inverse of `time.localtime`, not
+`time.gmtime`. The correct UTC inverse is `calendar.timegm`.
+**Fix / decision:** added `_parse_utc_timestamp()` (uses `calendar.timegm`, returns
+`None` on empty/malformed input) and routed the gate through it, so the window is
+timezone-independent. Covered by `tests/test_pr_eval_rate_limit.py` (asserts the
+true UTC epoch via `datetime(..., tzinfo=utc)`, and — where `time.tzset` exists —
+re-checks under forced non-UTC zones).
+**Follow-up:** none for this bug. Separately noted while reading the gate: only
+*approved* submissions are appended to `history`, so the rate limit currently
+counts prior *wins*, not prior *attempts* — a larger design question left for its
+own change.
+
+---
+
 ## 2026-06-25 — Constrained decoding fixes parse_rate (1.0), but GRPO has a dead gradient (samples=0)  #repro #finding #decision #gotcha
 
 **Context:** Phase-0 plateaued at parse_rate ~0.047 (format-bound). Added flag-gated constrained

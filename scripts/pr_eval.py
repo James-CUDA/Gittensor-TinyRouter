@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import calendar
 import hashlib
 import json
 import os
@@ -137,6 +138,26 @@ def _load_submission(submission_dir: Path) -> Optional[Tuple[np.ndarray, np.ndar
 # Gate 1: Rate Limiting
 # ==========================================================================
 
+def _parse_utc_timestamp(ts_str: str) -> Optional[float]:
+    """Parse a ``YYYY-MM-DDTHH:MM:SSZ`` UTC stamp to a Unix epoch (seconds).
+
+    Leaderboard timestamps are written in UTC (``time.gmtime`` + trailing ``Z``,
+    see :func:`_update_leaderboard`), so they must be read back as UTC. Using
+    ``time.mktime`` here would interpret the struct as *local* time and skew the
+    epoch by the maintainer host's UTC offset — silently shifting the rate-limit
+    window by hours on any non-UTC box. ``calendar.timegm`` is the UTC inverse of
+    ``time.gmtime`` and is timezone-independent.
+
+    Returns ``None`` if ``ts_str`` is empty or not in the expected format.
+    """
+    if not ts_str:
+        return None
+    try:
+        return float(calendar.timegm(time.strptime(ts_str, "%Y-%m-%dT%H:%M:%SZ")))
+    except (ValueError, OSError):
+        return None
+
+
 def _check_rate_limit(miner_name: str, benchmark: str, leaderboard: dict) -> Optional[str]:
     """Check if miner has exceeded the submission rate limit.
 
@@ -148,10 +169,8 @@ def _check_rate_limit(miner_name: str, benchmark: str, leaderboard: dict) -> Opt
     cutoff = time.time() - _RATE_LIMIT_WINDOW_DAYS * 86400
     recent = 0
     for entry in history:
-        ts_str = entry.get("timestamp", "")
-        try:
-            ts = time.mktime(time.strptime(ts_str, "%Y-%m-%dT%H:%M:%SZ"))
-        except (ValueError, OSError):
+        ts = _parse_utc_timestamp(entry.get("timestamp", ""))
+        if ts is None:
             continue
         if entry.get("miner") == miner_name and ts > cutoff:
             recent += 1
