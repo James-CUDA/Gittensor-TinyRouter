@@ -18,6 +18,25 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-07-09 — Roadmap realigned to the SN74 three-benchmark competition plan  #decision
+**Context:** after reframing the README around the SN74 competition loop, `ROADMAP.md` was still describing the old math500/MMLU competition shape and did not reflect the new target benchmarks or the staged TRINITY-then-Conductor plan.
+**Expected:** the roadmap should describe the current competition objective, frozen-protocol requirements, benchmark-adapter work, oracle-headroom gate, shared-head training path, miner PR flow, and the later benchmark/model-pool expansion path.
+**Actual:** rewrote `ROADMAP.md` around the current 3-benchmark target (`SWE-bench Verified`, `LiveCodeBench v6`, `MMLU-Pro`), the current 3-model pool, Phase 0 protocol freeze, Phase 1 adapters, Phase 2 oracle analysis, Phase 3 shared TRINITY head on RTX 5090, Phase 4 miner competition loop, and Phase 5 Conductor on H100.
+**Root cause:** the old roadmap had become historically stale: it still reflected the earlier math500/MMLU competition framing rather than the intended SN74-style multi-benchmark competition.
+**Fix / decision:** align the roadmap with the new README and use it as the canonical phase plan for the competition front door. Keep detailed implementation decisions in `AGENTS.md` and `docs/SPEC.md`.
+**Follow-up:** once the protocol file, benchmark manifests, and submission artifact contract exist, link them from the roadmap so the phases point to concrete deliverables rather than just headings.
+
+---
+
+## 2026-07-09 — README reframed to SN74 competition front door  #decision
+**Context:** the repo front page had drifted between an internal TRINITY replication lab notebook and a public-facing competition pitch. We needed a README that matched the intended Gittensor SN74-style miner competition framing while preserving the TRINITY-then-Conductor roadmap.
+**Expected:** a README aligned to subnet competition style would describe the frozen composite benchmark, miner PR flow, verified frontier scoring, current 3-benchmark scope, and staged hardware plan without pretending the repo already implements the full ultimate roadmap.
+**Actual:** rewrote `README.md` around the SN74 competition loop: current benchmark triad (`SWE-bench Verified`, `LiveCodeBench v6`, `MMLU-Pro`), current 3-model pool, proposed eval labels, frozen protocol, miner guide, phased roadmap, and the TRINITY-on-5090 then Conductor-on-H100 plan.
+**Root cause:** the earlier README mixed replication results, competition claims, and aspirational scope in a way that was no longer a clean front door for contributors.
+**Fix / decision:** make the README explicitly competition-first and benchmark-protocol-first, while leaving `AGENTS.md` and `docs/SPEC.md` as the implementation/research source of truth. The README now explains the current competition scope and the long-term expansion path separately.
+**Follow-up:** if the evaluator, packaging flow, or hidden benchmark protocol solidifies further, the README should be tightened again so the submission artifacts and score labels match the actual code rather than the planned interface.
+
+
 ## 2026-06-25 — Constrained decoding fixes parse_rate (1.0), but GRPO has a dead gradient (samples=0)  #repro #finding #decision #gotcha
 
 **Context:** Phase-0 plateaued at parse_rate ~0.047 (format-bound). Added flag-gated constrained
