@@ -74,5 +74,5 @@ dist/
 # ============================================================
 #  Hidden benchmark (maintainer-only, stored OUTSIDE the repo)
 # ============================================================
-benchmark/
+/benchmark/
 tinyrouter-benchmark/

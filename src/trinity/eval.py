@@ -15,18 +15,30 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import random
 from pathlib import Path
 from statistics import mean
 
-import numpy as np
-import yaml
-
 from .adapters import get_adapter
-from .coordinator.policy import CoordinatorPolicy
+from .eval_harness import (
+    RandomPolicy,
+    load_and_configure_policy,
+    score_policy,
+    score_random_routing,
+    score_single_model,
+    task_rng,
+)
+from .eval_harness import reduce_scores as _reduce_scores
+from .eval_harness import score_policy as _score_policy
+from .eval_harness import score_single_model as _score_single_model
 from .llm.openrouter_client import OpenRouterPool
-from .orchestration.session import run_trajectory
-from .types import ROLE_ORDER, Role
+
+__all__ = [
+    "REPRODUCIBILITY_SEED",
+    "RandomPolicy",
+    "task_rng",
+    "evaluate",
+    "main",
+]
 
 _REPO = Path(__file__).resolve().parents[2]
 
@@ -34,143 +46,6 @@ _REPO = Path(__file__).resolve().parents[2]
 # Using a custom seed prints a warning: cherry-picking seeds to find a lucky
 # eval split undermines result trustworthiness.
 REPRODUCIBILITY_SEED: int = 42
-
-
-class RandomPolicy:
-    """Random (agent, role) each turn — the R4 routing baseline (no GPU).
-
-    Draws from the caller-supplied ``rng`` when one is given, so each trajectory
-    can own a deterministically-seeded stream. Falling back to a single shared
-    ``self.rng`` across trajectories running under ``asyncio.gather`` would make
-    the draws depend on network completion order rather than on the seed.
-    """
-
-    def __init__(self, n_models: int, seed: int = 0) -> None:
-        self.n_models = n_models
-        self.rng = random.Random(seed)
-
-    def decide(
-        self,
-        transcript_text: str,
-        *,
-        sample: bool = False,
-        rng: random.Random | None = None,
-    ) -> tuple[int, Role]:
-        """Pick the next (agent index, role) uniformly at random.
-
-        Args:
-            transcript_text: Unused — the baseline ignores the transcript.
-            sample: Unused — the baseline is always stochastic.
-            rng: Per-trajectory RNG. Falls back to the instance RNG when ``None``.
-
-        Returns:
-            A ``(agent_idx, role)`` pair.
-        """
-        r = self.rng if rng is None else rng
-        return r.randrange(self.n_models), r.choice(ROLE_ORDER)
-
-
-def task_rng(seed: int, task_id: str) -> random.Random:
-    """Build a per-task RNG whose stream depends only on ``seed`` and ``task_id``.
-
-    Keeps the random-routing baseline invariant to ``asyncio`` scheduling: a task's
-    draws never depend on when other concurrent tasks' HTTP calls happen to return.
-    Seeding from a string is stable across processes (``random.Random`` hashes str
-    seeds with SHA-512, so it does not depend on ``PYTHONHASHSEED``).
-
-    Args:
-        seed: The run's base seed.
-        task_id: The benchmark item's stable identifier.
-
-    Returns:
-        A freshly seeded :class:`random.Random`.
-    """
-    return random.Random(f"{seed}:{task_id}")
-
-
-def _reduce_scores(scores: list, *, label: str) -> float:
-    """Average per-task scores, counting a failed trajectory as ``0.0``.
-
-    ``asyncio.gather(..., return_exceptions=True)`` returns a :class:`BaseException`
-    in place of any task whose trajectory exhausted its retries (e.g. a persistent
-    ``httpx.ReadTimeout``). Such a task degrades to a score of ``0.0`` instead of
-    aborting the whole evaluation — the same pessimistic convention training already
-    uses (:mod:`trinity.optim.fitness`). The failed task stays in the denominator: it
-    produced no answer, so it is not correct, and dropping it would inflate the mean
-    by survivorship.
-
-    Args:
-        scores: Per-task scores, each either a ``float`` or the :class:`BaseException`
-            raised while producing it.
-        label: Scorer name, shown in the degraded-run warning.
-
-    Returns:
-        The mean task score.
-
-    Raises:
-        RuntimeError: If *every* task failed. A dead API must not be reportable as a
-            measurement of ``0.0`` accuracy, so the caller aborts rather than writing
-            a meaningless results file.
-    """
-    n_failed = sum(isinstance(s, BaseException) for s in scores)
-    if scores and n_failed == len(scores):
-        raise RuntimeError(
-            f"{label}: all {len(scores)} trajectories failed (last error: "
-            f"{type(scores[-1]).__name__}: {scores[-1]}); refusing to report 0.0."
-        )
-    if n_failed:
-        print(f"  [warn] {label}: {n_failed}/{len(scores)} trajectories failed "
-              "(counted as 0.0); the reported score is degraded.", flush=True)
-    return float(mean(0.0 if isinstance(s, BaseException) else s for s in scores))
-
-
-async def _score_policy(
-    tasks, policy, pool, pool_models, *, adapter, sample, rng_seed: int | None = None,
-    label: str = "routing", **run_kwargs,
-) -> float:
-    import httpx
-
-    async with httpx.AsyncClient() as cli:
-        # return_exceptions=True so one trajectory that exhausts retries (e.g. a
-        # persistent timeout) degrades to 0.0 instead of discarding the whole eval —
-        # and every baseline already computed before it. Matches training
-        # (trinity.optim.fitness), which tolerates the same error.
-        trajs = await asyncio.gather(
-            *[
-                run_trajectory(
-                    t, policy, pool, pool_models, adapter=adapter, sample=sample, client=cli,
-                    rng=None if rng_seed is None else task_rng(rng_seed, t.task_id),
-                    **run_kwargs,
-                )
-                for t in tasks
-            ],
-            return_exceptions=True,
-        )
-    # Score through the adapter (not reward.score directly) so the routed path
-    # honours the same benchmark contract as the single-model baseline. A failed
-    # trajectory is kept as its exception and scored 0.0 by _reduce_scores.
-    scores = [t if isinstance(t, BaseException) else adapter.score_trajectory(t) for t in trajs]
-    return _reduce_scores(scores, label=label)
-
-
-async def _score_single_model(tasks, pool, model, adapter, *, max_tokens, reasoning) -> float:
-    """Baseline: ask one model directly (one Worker-style turn), score its answer."""
-    import httpx
-
-    from .roles.prompts import build_messages
-
-    async with httpx.AsyncClient() as cli:
-        async def one(task):
-            msgs = build_messages(Role.WORKER, adapter.build_prompt(task), [])
-            res = await pool.chat(model, msgs, max_tokens=max_tokens, temperature=0.0,
-                                  reasoning=reasoning, client=cli)
-            return adapter.score_output(res.text, task.answer)
-
-        # return_exceptions=True: a single retry-exhausted task degrades to 0.0 rather
-        # than aborting the baseline (and discarding the other baselines this run
-        # already computed).
-        scores = await asyncio.gather(*[one(t) for t in tasks], return_exceptions=True)
-    return _reduce_scores(scores, label=f"single::{model}")
 
 
 async def evaluate(args) -> dict:
@@ -189,7 +64,7 @@ async def evaluate(args) -> dict:
 
     # --- single-model baselines (R1/R2) ---
     for m in pool_models:
-        reps = [await _score_single_model(tasks, pool, m, adapter,
+        reps = [await score_single_model(tasks, pool, m, adapter,
                                           max_tokens=args.max_tokens, reasoning=args.reasoning)
                 for _ in range(max(1, args.single_reps))]
         s = float(mean(reps))
@@ -202,18 +77,12 @@ async def evaluate(args) -> dict:
             print(f"  single  {m:20s} = {s:.4f}")
 
     # --- TRINITY trained coordinator (argmax) ---
-    cfg = yaml.safe_load(Path(args.config).read_text())["coordinator"]
     print("[eval] building coordinator on GPU...")
-    policy, spec = CoordinatorPolicy.build(
-        model_name=cfg["encoder_model"], device=cfg.get("device", "cuda:0"),
-        dtype=cfg.get("dtype", "bfloat16"), target_layer=cfg["svf"]["target_layer"],
-        svf_matrices=cfg["svf"].get("matrices"), n_models=n_models,
-        l2_normalize=cfg["hidden_state"].get("l2_normalize", True),
+    policy, _spec = load_and_configure_policy(args.config, n_models, args.theta)
+    s_trinity = await score_policy(
+        tasks, policy, pool, pool_models, adapter=adapter,
+        sample=False, label="TRINITY", **run_kwargs,
     )
-    theta = np.load(args.theta)
-    policy.configure(theta, spec)
-    s_trinity = await _score_policy(tasks, policy, pool, pool_models, adapter=adapter,
-                                    sample=False, label="TRINITY", **run_kwargs)
     results["TRINITY"] = s_trinity
     print(f"  TRINITY (trained)        = {s_trinity:.4f}")
 
@@ -222,18 +91,12 @@ async def evaluate(args) -> dict:
     # small eval sets (~120 q's) the variance is large (0.733–0.792 in
     # practice).  Reporting the mean over 100 seeds gives an honest baseline.
     rand_seeds = max(1, args.rand_seeds)
-    rand_scores: list[float] = []
-    for s in range(rand_seeds):
-        seed_s = args.seed * 10000 + s
-        rand = RandomPolicy(n_models, seed=seed_s)
-        s_r = await _score_policy(tasks, rand, pool, pool_models, adapter=adapter,
-                                  sample=False, rng_seed=seed_s, label="random routing",
-                                  **run_kwargs)
-        rand_scores.append(s_r)
-    s_rand = float(mean(rand_scores))
+    s_rand, rand_std = await score_random_routing(
+        tasks, pool, pool_models, n_models, adapter=adapter,
+        n_seeds=rand_seeds, base_seed=args.seed, **run_kwargs,
+    )
     results["random_routing"] = s_rand
-    if rand_seeds > 1:
-        rand_std = (sum((x - s_rand) ** 2 for x in rand_scores) / rand_seeds) ** 0.5
+    if rand_std is not None:
         results["random_routing_std"] = rand_std
         print(f"  random routing           = {s_rand:.4f} ± {rand_std:.4f}  (n={rand_seeds} seeds)")
     else:

@@ -17,9 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
 import calendar
-import hashlib
 import json
 import os
 import sys
@@ -28,7 +26,6 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-import yaml
 
 _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO / "src"))
@@ -47,32 +44,7 @@ _RATE_LIMIT_MAX_SUBMISSIONS = 1
 _POOL_MODELS = ["qwen3.5-35b-a3b", "minimax-m3", "deepseek-v4-flash"]
 
 
-# ==========================================================================
-# AES decryption (matches build_benchmark.py's encryption)
-# ==========================================================================
-
-def _derive_key(password: str, salt: bytes) -> bytes:
-    return hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 200_000, dklen=32)
-
-
-def _decrypt_json(filepath: Path, password: str) -> dict:
-    """Decrypt an AES-256-GCM encrypted JSON benchmark file."""
-    try:
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-    except ImportError:
-        print("ERROR: cryptography package required. pip install cryptography")
-        sys.exit(1)
-
-    ciphertext_b64 = filepath.read_text().strip()
-    combined = base64.b64decode(ciphertext_b64)
-    salt = combined[:16]
-    nonce = combined[16:28]
-    ct = combined[28:]
-    key = _derive_key(password, salt)
-    aesgcm = AESGCM(key)
-    plain = aesgcm.decrypt(nonce, ct, None)
-    data = json.loads(plain.decode("utf-8"))
-    return data["items"]  # extract the items list
+from trinity.benchmark.crypto import decrypt_json
 
 
 # ==========================================================================
@@ -104,7 +76,7 @@ def _load_hidden_benchmark(benchmark_name: str) -> Tuple[List[dict], List[dict],
         fp = bench_path / filename
         if fp.exists():
             try:
-                items = _decrypt_json(fp, password)
+                items = decrypt_json(fp, password)["items"]
                 target.extend(items)
             except Exception as exc:
                 print(f"[pr_eval] ERROR: Failed to decrypt {filename}: {exc}")
@@ -706,22 +678,13 @@ async def evaluate_pr(pr_number: int, benchmark: str,
     print(f"[pr_eval] Loaded encrypted benchmark: {len(eval_items)} eval + "
           f"{len(audit_items)} audit + {len(live_items)} live questions")
 
-    from trinity.coordinator.policy import CoordinatorPolicy
+    from trinity.coordinator.config import build_policy_from_config, load_coordinator_section
     from trinity.llm.openrouter_client import OpenRouterPool
 
-    cfg = yaml.safe_load((_REPO / "configs" / "trinity.yaml").read_text())
-    cc = cfg["coordinator"]
+    cc = load_coordinator_section(_REPO / "configs" / "trinity.yaml")
 
     print("[pr_eval] Loading encoder on GPU...")
-    policy, spec = CoordinatorPolicy.build(
-        model_name=cc["encoder_model"],
-        device=cc.get("device", "cuda:0"),
-        dtype=cc.get("dtype", "bfloat16"),
-        target_layer=cc["svf"]["target_layer"],
-        svf_matrices=cc["svf"].get("matrices"),
-        n_models=3, n_roles=3,
-        l2_normalize=cc["hidden_state"].get("l2_normalize", True),
-    )
+    policy, spec = build_policy_from_config(cc, n_models=3, n_roles=3)
     encoder = policy.encoder
 
     from trinity.coordinator.head import LinearHead

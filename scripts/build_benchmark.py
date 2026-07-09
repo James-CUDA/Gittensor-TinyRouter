@@ -24,11 +24,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
-import hashlib
 import json
 import os
-import secrets
 import sys
 import time
 from pathlib import Path
@@ -40,34 +37,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # sibling scripts/ mod
 
 import benchmark_protocol as protocol  # noqa: E402  (needs the sys.path insert above)
 
+from trinity.benchmark.crypto import encrypt_json
+
 # ---- SEALED SEED — never change after first build ----
 # The sampling protocol (seed, split counts, integrity hash) is frozen in
 # scripts/benchmark_protocol.py; see docs/BENCHMARK_PROTOCOL.md. Kept as a local
 # alias so the build log and file headers keep printing the seed.
 _BENCHMARK_SEED: int = protocol.SEALED_SEED
 
-
-def _derive_key(password: str, salt: bytes) -> bytes:
-    """PBKDF2-SHA256 key derivation."""
-    return hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 200_000, dklen=32)
-
-
-def _encrypt_json(data: dict, password: str) -> str:
-    """AES-256-GCM encrypt a JSON-serializable dict. Returns base64 string."""
-    try:
-        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-    except ImportError:
-        print("ERROR: cryptography package required. pip install cryptography")
-        sys.exit(1)
-
-    plain = json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
-    salt = secrets.token_bytes(16)
-    key = _derive_key(password, salt)
-    nonce = secrets.token_bytes(12)
-    aesgcm = AESGCM(key)
-    ct = aesgcm.encrypt(nonce, plain, None)
-    combined = salt + nonce + ct
-    return base64.b64encode(combined).decode("ascii")
+_encrypt_json = encrypt_json
 
 
 def _sample_pool(benchmark: str, counts: Dict[str, int]) -> List[Any]:

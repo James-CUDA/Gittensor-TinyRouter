@@ -130,6 +130,15 @@ analysis output is still printed. Routing detection unchanged on `main` (#86).
 **Follow-up:** if labels must be applied to fork PRs automatically, add a minimal
 `pull_request_target` workflow that only calls the labels API.
 
+## 2026-07-10 — Deduplicate pricing, eval harness, coordinator config, crypto  #decision
+**Context:** audit of duplicated logic across scripts and core modules before further competition work; rebase onto OpenRouter pool.
+**Expected:** one canonical source for OpenRouter pricing, eval helpers, coordinator YAML→policy build, AES benchmark crypto, and chat-kwargs filtering.
+**Actual:** added `trinity.llm.pricing`, `trinity.llm.client_utils`, `trinity.coordinator.config`, `trinity.benchmark.crypto`, and `trinity.eval_harness`; updated `eval.py`, `audit_eval.py`, `train.py`, `pack_submission.py`, `pr_eval.py`, `build_benchmark.py`, `cost_report.py`, `oracle_ceiling.py`, `fugu/cost.py`, `session.py`, `workflow.py`. Fixed `pack_submission._estimate_cost` which had drifted to flat $0.90/Mtok. Eval harness now also carries adapter-aware scoring + per-task RNG from main. Rebase onto cost-ledger fix: `ledger_total_usd` / `cost_report` use `trinity.llm.cost_ledger` for hash verification (not `json.dumps` re-serialize).
+**Root cause:** copy-paste growth as scripts landed independently; "keep in sync" comments were already failing.
+**Fix / decision:** branch `refactor/dedupe-shared-modules`; import from shared modules instead of redefining constants/helpers.
+**Follow-up:** optional next pass: shared `_load_tasks` in fugu scripts, test `StubPool` fixtures, read pool model list from `configs/models.yaml`.
+
+
 ## 2026-07-10 — Duplicate-detection gate (Gate 3) defeated by re-rolling SVF scales  #mistake #finding #decision
 
 **Context:** auditing the anti-cheat gates in `scripts/pr_eval.py`. Gate 3

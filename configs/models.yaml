@@ -4,7 +4,7 @@
 #
 # ===== Adding a new model =====
 # 1. Add a new entry under `pool:` with a short `name` and the full OpenRouter model slug.
-# 2. Add pricing to the PRICES dict in scripts/cost_report.py.
+# 2. Add pricing to trinity.llm.pricing.OPENROUTER_PRICES.
 # 3. Run the selftest: python -m trinity.llm.openrouter_client --selftest
 # 4. Update the model pool table in README.md.
 # 5. The coordinator head dimension (n_a = L + 3) will auto-adjust from pool size.

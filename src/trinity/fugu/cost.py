@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from trinity.fugu.workflow import CONDUCTOR_KEY
+from trinity.llm.pricing import OPENROUTER_PRICES
 
 __all__ = [
     "PRICES",
@@ -32,13 +33,8 @@ __all__ = [
     "estimate_eval_cost",
 ]
 
-# OpenRouter prices, $/1M tokens (prompt, completion). Keep in sync with
-# scripts/oracle_ceiling.py::_DEFAULT_PRICES.
-PRICES: dict[str, tuple[float, float]] = {
-    "qwen3.5-35b-a3b": (0.14, 1.00),
-    "minimax-m3": (0.30, 1.20),
-    "deepseek-v4-flash": (0.09, 0.18),
-}
+# Re-export canonical OpenRouter rates (see trinity.llm.pricing).
+PRICES: dict[str, tuple[float, float]] = OPENROUTER_PRICES
 
 
 def _conductor_price(

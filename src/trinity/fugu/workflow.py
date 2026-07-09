@@ -32,6 +32,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from trinity.llm.client_utils import filter_supported_kwargs as _supported_kwargs
 from trinity.roles import postprocess as _pp
 from trinity.types import Role, Task
 
@@ -363,19 +364,6 @@ def _worker_messages(task: Task, subtask: str, context: str) -> list[dict]:
         f"{format_hint(task.benchmark)}"
     )
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
-
-
-def _supported_kwargs(fn, kwargs: dict) -> dict:
-    """Drop kwargs a (possibly stub) ``chat`` does not accept (cf. session.py)."""
-    import inspect
-
-    try:
-        params = inspect.signature(fn).parameters
-    except (TypeError, ValueError):
-        return kwargs
-    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
-        return kwargs
-    return {k: v for k, v in kwargs.items() if k in params}
 
 
 async def _worker_call(

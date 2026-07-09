@@ -20,21 +20,22 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
+
+_REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_REPO / "src"))
 
 from trinity.llm.cost_ledger import read_ledger_entries, verify_ledger_chain
+from trinity.llm.pricing import OPENROUTER_PRICES, blended_rates, token_cost_usd
 
-# ---- OpenRouter prices ($ per 1M tokens), (input, output). ----
-PRICES = {
-    "qwen3.5-35b-a3b": (0.14, 1.00),
-    "minimax-m3":      (0.30, 1.20),
-    "deepseek-v4-flash": (0.09, 0.18),
-}
-_DEFAULT_BLENDED_IN = sum(p[0] for p in PRICES.values()) / len(PRICES)
-_DEFAULT_BLENDED_OUT = sum(p[1] for p in PRICES.values()) / len(PRICES)
+# Re-export for scripts that imported PRICES from here.
+PRICES = OPENROUTER_PRICES
+_DEFAULT_BLENDED_IN, _DEFAULT_BLENDED_OUT = blended_rates(PRICES)
 
 
 def cost(prompt_tok: int, completion_tok: int, in_rate: float, out_rate: float) -> float:
-    return prompt_tok / 1e6 * in_rate + completion_tok / 1e6 * out_rate
+    return token_cost_usd("", prompt_tok, completion_tok,
+                          default_in=in_rate, default_out=out_rate)
 
 
 def report_ledger(path: str) -> None:

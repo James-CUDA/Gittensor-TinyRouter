@@ -76,7 +76,7 @@ def _fake_run_trajectory(fail_ids: set[str]):
 
 def test_one_failed_trajectory_degrades_to_zero_not_abort(monkeypatch):
     """3 of 4 tasks answer correctly, one exhausts retries -> score 0.75, no abort."""
-    monkeypatch.setattr(te, "run_trajectory", _fake_run_trajectory({"2"}))
+    monkeypatch.setattr("trinity.eval_harness.run_trajectory", _fake_run_trajectory({"2"}))
     score = asyncio.run(te._score_policy(
         _tasks(4), policy=None, pool=None, pool_models=[], adapter=_Adapter(), sample=False))
     assert score == pytest.approx(0.75)
@@ -84,7 +84,7 @@ def test_one_failed_trajectory_degrades_to_zero_not_abort(monkeypatch):
 
 def test_clean_run_matches_plain_mean(monkeypatch):
     """No failures -> identical to the old plain-mean path (happy path unchanged)."""
-    monkeypatch.setattr(te, "run_trajectory", _fake_run_trajectory(set()))
+    monkeypatch.setattr("trinity.eval_harness.run_trajectory", _fake_run_trajectory(set()))
     score = asyncio.run(te._score_policy(
         _tasks(4), policy=None, pool=None, pool_models=[], adapter=_Adapter(), sample=False))
     assert score == pytest.approx(1.0)
@@ -92,7 +92,7 @@ def test_clean_run_matches_plain_mean(monkeypatch):
 
 def test_all_failed_raises_rather_than_reporting_zero(monkeypatch):
     """A dead API must raise, not report 0.0 accuracy that looks like a real measurement."""
-    monkeypatch.setattr(te, "run_trajectory", _fake_run_trajectory({"0", "1", "2", "3"}))
+    monkeypatch.setattr("trinity.eval_harness.run_trajectory", _fake_run_trajectory({"0", "1", "2", "3"}))
     with pytest.raises(RuntimeError, match="all 4 trajectories failed"):
         asyncio.run(te._score_policy(
             _tasks(4), policy=None, pool=None, pool_models=[], adapter=_Adapter(), sample=False))
@@ -110,7 +110,7 @@ def test_single_model_baseline_survives_one_failure(monkeypatch):
 
 def test_failure_count_is_printed(monkeypatch, capsys):
     """A degraded number is announced so it is never mistaken for a clean one."""
-    monkeypatch.setattr(te, "run_trajectory", _fake_run_trajectory({"2"}))
+    monkeypatch.setattr("trinity.eval_harness.run_trajectory", _fake_run_trajectory({"2"}))
     asyncio.run(te._score_policy(
         _tasks(4), policy=None, pool=None, pool_models=[], adapter=_Adapter(), sample=False,
         label="TRINITY"))

@@ -571,12 +571,8 @@ class _CostMeter:
         self.calls += 1
 
 
-# OpenRouter list prices for the default pool: $/1M (in, out).
-_DEFAULT_PRICES = {
-    "qwen3.5-35b-a3b": (0.14, 1.00),
-    "minimax-m3": (0.30, 1.20),
-    "deepseek-v4-flash": (0.09, 0.18),
-}
+# OpenRouter prices from trinity.llm.pricing (single source of truth).
+from trinity.llm.pricing import OPENROUTER_PRICES as _DEFAULT_PRICES
 
 
 async def _collect(args) -> int:

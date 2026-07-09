@@ -21,7 +21,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-import yaml
 
 _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO / "src"))
@@ -38,18 +37,8 @@ def _estimate_cost() -> float:
     if not ledger_path:
         return 0.0
     try:
-        from trinity.llm.cost_ledger import read_ledger_entries, verify_ledger_chain
-
-        valid, _, _ = verify_ledger_chain(ledger_path)
-        if not valid:
-            return 0.0
-
-        total = 0.0
-        pricing = {"qwen3.5-35b-a3b": 0.90, "minimax-m3": 0.90, "deepseek-v4-flash": 0.90}
-        for entry in read_ledger_entries(ledger_path):
-            price = pricing.get(entry.model, 0.90)
-            total += price * entry.total_tokens / 1_000_000
-        return round(total, 4)
+        from trinity.llm.pricing import ledger_total_usd
+        return ledger_total_usd(ledger_path, verify_chain=True)
     except Exception:
         return 0.0
 
@@ -80,23 +69,12 @@ def build_receipt(run_dir: Path, benchmark: str) -> dict:
 
 def extract_head_and_svf(run_dir: Path) -> tuple[np.ndarray, np.ndarray]:
     """Load the coordinator, install best theta, extract head + SVF."""
-    from trinity.coordinator.policy import CoordinatorPolicy
-    from trinity.coordinator import params as P
+    from trinity.coordinator.config import build_policy_from_config, load_coordinator_section
 
-    cfg = yaml.safe_load((_REPO / "configs" / "trinity.yaml").read_text())
-    cc = cfg["coordinator"]
+    cc = load_coordinator_section(_REPO / "configs" / "trinity.yaml")
 
     print("Loading encoder on GPU (this may take a moment)...")
-    policy, spec = CoordinatorPolicy.build(
-        model_name=cc["encoder_model"],
-        device=cc.get("device", "cuda:0"),
-        dtype=cc.get("dtype", "bfloat16"),
-        target_layer=cc["svf"]["target_layer"],
-        svf_matrices=cc["svf"].get("matrices"),
-        n_models=3,
-        n_roles=3,
-        l2_normalize=cc["hidden_state"].get("l2_normalize", True),
-    )
+    policy, spec = build_policy_from_config(cc, n_models=3, n_roles=3)
 
     theta_path = run_dir / "best_theta.npy"
     if not theta_path.exists():

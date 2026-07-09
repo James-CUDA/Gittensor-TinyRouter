@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from ..llm.client_utils import filter_supported_kwargs as _filter_supported
 from ..roles import postprocess as _pp
 from ..roles import prompts as _prompts
 from ..roles import verifier as _verifier
@@ -120,16 +121,3 @@ def _final_answer(traj: Trajectory) -> str:
         if t.role != Role.VERIFIER:
             return t.processed_output
     return traj.turns[-1].processed_output if traj.turns else ""
-
-
-def _filter_supported(fn, kwargs: dict) -> dict:
-    """Drop kwargs the client doesn't accept (e.g. `reasoning` on a stub)."""
-    import inspect
-
-    try:
-        params = inspect.signature(fn).parameters
-    except (TypeError, ValueError):
-        return kwargs
-    if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
-        return kwargs
-    return {k: v for k, v in kwargs.items() if k in params}

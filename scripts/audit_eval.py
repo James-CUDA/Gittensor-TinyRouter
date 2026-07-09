@@ -24,23 +24,20 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
 from pathlib import Path
-from statistics import mean
-
-import numpy as np
-import yaml
 
 _REPO = Path(__file__).resolve().parents[1]
-import sys
 sys.path.insert(0, str(_REPO / "src"))
 
-from trinity.coordinator import params as P
-from trinity.coordinator.policy import CoordinatorPolicy
-from trinity.llm.openrouter_client import OpenRouterPool
-from trinity.orchestration import reward as R
-from trinity.orchestration.dataset import load_tasks
-from trinity.orchestration.session import run_trajectory
-from trinity.types import Role
+from trinity.adapters import get_adapter  # noqa: E402
+from trinity.eval_harness import (  # noqa: E402
+    load_and_configure_policy,
+    score_policy,
+    score_random_routing,
+    score_single_model,
+)
+from trinity.llm.openrouter_client import OpenRouterPool  # noqa: E402
 
 # ---- SEALED SEED — committed, never changed. ----
 # This seed selects a held-out subset of questions that NO experiment has
@@ -58,9 +55,10 @@ async def run_audit(args) -> dict:
     pool_models = list(pool.models)
     n_models = len(pool_models)
 
+    adapter = get_adapter(args.benchmark)
     # Load tasks with the SEALED seed — NO override possible.
-    tasks = load_tasks(
-        args.benchmark, _AUDIT_SPLIT,
+    tasks = adapter.load_tasks(
+        _AUDIT_SPLIT,
         max_items=args.max_items,
         seed=_AUDIT_SEED,
     )
@@ -77,67 +75,30 @@ async def run_audit(args) -> dict:
 
     # --- Single-model baselines ---
     for m in pool_models:
-        from trinity.roles.prompts import build_messages
-        import httpx
-        async with httpx.AsyncClient() as cli:
-            async def one(task):
-                msgs = build_messages(Role.WORKER, task.prompt, [])
-                res = await pool.chat(
-                    m, msgs, max_tokens=args.max_tokens, temperature=0.0,
-                    reasoning=args.reasoning, client=cli,
-                )
-                return R.score_text(args.benchmark, res.text, task.answer)
-            scores = await asyncio.gather(*[one(t) for t in tasks])
-        s = float(mean(scores))
+        s = await score_single_model(
+            tasks, pool, m, adapter,
+            max_tokens=args.max_tokens, reasoning=args.reasoning,
+        )
         results[f"single::{m}"] = s
         print(f"  single  {m:20s} = {s:.4f}")
 
     # --- TRINITY trained coordinator (argmax) ---
-    cfg = yaml.safe_load(Path(args.config).read_text())["coordinator"]
     print("[audit] building coordinator on GPU...")
-    policy, spec = CoordinatorPolicy.build(
-        model_name=cfg["encoder_model"],
-        device=cfg.get("device", "cuda:0"),
-        dtype=cfg.get("dtype", "bfloat16"),
-        target_layer=cfg["svf"]["target_layer"],
-        svf_matrices=cfg["svf"].get("matrices"),
-        n_models=n_models,
-        l2_normalize=cfg["hidden_state"].get("l2_normalize", True),
+    policy, _spec = load_and_configure_policy(args.config, n_models, args.theta)
+    s_trinity = await score_policy(
+        tasks, policy, pool, pool_models, adapter=adapter,
+        sample=False, label="TRINITY", **run_kwargs,
     )
-    theta = np.load(args.theta)
-    policy.configure(theta, spec)
-
-    import httpx
-    async with httpx.AsyncClient() as cli:
-        trajs = await asyncio.gather(*[
-            run_trajectory(t, policy, pool, pool_models, sample=False,
-                           client=cli, **run_kwargs)
-            for t in tasks
-        ])
-    s_trinity = float(mean(R.score(t) for t in trajs))
     results["TRINITY"] = s_trinity
     print(f"  TRINITY (trained)        = {s_trinity:.4f}")
 
     # --- Random routing baseline (100 seeds) ---
-    import random as _random
-    rand_scores = []
-    for s in range(100):
-        rng = _random.Random(_AUDIT_SEED * 10000 + s)
-        async with httpx.AsyncClient() as cli:
-            rt = await asyncio.gather(*[
-                run_trajectory(
-                    t,
-                    _RandomAuditPolicy(n_models, rng),
-                    pool, pool_models, sample=False,
-                    client=cli, **run_kwargs,
-                )
-                for t in tasks
-            ])
-        rand_scores.append(float(mean(R.score(t) for t in rt)))
-    s_rand = float(mean(rand_scores))
-    rand_std = (sum((x - s_rand) ** 2 for x in rand_scores) / 100) ** 0.5
+    s_rand, rand_std = await score_random_routing(
+        tasks, pool, pool_models, n_models, adapter=adapter,
+        n_seeds=100, base_seed=_AUDIT_SEED, **run_kwargs,
+    )
     results["random_routing"] = s_rand
-    results["random_routing_std"] = rand_std
+    results["random_routing_std"] = rand_std  # type: ignore[assignment]
     print(f"  random routing           = {s_rand:.4f} ± {rand_std:.4f}  (n=100 seeds)")
 
     best_single = max(v for k, v in results.items() if k.startswith("single::"))
@@ -162,19 +123,6 @@ async def run_audit(args) -> dict:
         print(f"[audit] saved to {args.out}")
 
     return out
-
-
-class _RandomAuditPolicy:
-    """Random routing — no GPU needed, no trinity imports."""
-
-    def __init__(self, n_models: int, rng):
-        from trinity.types import ROLE_ORDER
-        self.n_models = n_models
-        self.rng = rng
-        self._roles = ROLE_ORDER
-
-    def decide(self, transcript_text, *, sample=False, rng=None):
-        return self.rng.randrange(self.n_models), self.rng.choice(self._roles)
 
 
 def main() -> None:

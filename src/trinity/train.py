@@ -21,7 +21,7 @@ import numpy as np
 import yaml
 
 from .coordinator import params as P
-from .coordinator.policy import CoordinatorPolicy
+from .coordinator.config import build_policy_from_config
 from .llm.openrouter_client import OpenRouterPool
 from .optim.fitness import FitnessConfig, evaluate_population
 from .optim.sep_cmaes import SepCMAES, default_popsize
@@ -73,16 +73,7 @@ async def train(args) -> dict:
 
     print(f"[train] benchmark={args.benchmark}  pool={pool_models}")
     print("[train] building coordinator on GPU (this loads Qwen3-0.6B)...")
-    policy, spec = CoordinatorPolicy.build(
-        model_name=cc["encoder_model"],
-        device=cc.get("device", "cuda:0"),
-        dtype=cc.get("dtype", "bfloat16"),
-        target_layer=cc["svf"]["target_layer"],
-        svf_matrices=cc["svf"].get("matrices"),
-        n_models=n_models,
-        n_roles=cc["head"].get("n_roles", 3),
-        l2_normalize=cc["hidden_state"].get("l2_normalize", True),
-    )
+    policy, spec = build_policy_from_config(cc, n_models=n_models)
     assert spec.n_svf == int(policy.svf.num_scales), (
         f"spec.n_svf={spec.n_svf} != svf.num_scales={policy.svf.num_scales}"
     )
