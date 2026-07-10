@@ -189,13 +189,30 @@ def _committed_answer(benchmark: str, traj: Trajectory) -> str:
     return final
 
 
+def _answerful(benchmark: str, tr) -> bool:
+    """Whether turn ``tr`` may source a committed answer for ``benchmark``.
+
+    The single predicate behind both committed-answer selection
+    (:func:`_last_answerful_output`) and the HERO self-consistency vote
+    (:func:`answerful_non_verifier_outputs`), so "which turns can carry the
+    answer" is defined in exactly one place. A :attr:`~trinity.types.Role.VERIFIER`
+    turn is never eligible — the checker *discusses* answers (its pass-through
+    ``processed_output`` keeps the critique) but never commits one — and the turn
+    must carry an extractable answer (:func:`has_answer`).
+    """
+    if getattr(tr, "role", None) == Role.VERIFIER:
+        return False
+    txt = getattr(tr, "processed_output", "") or ""
+    return has_answer(benchmark, txt)
+
+
 def _last_answerful_output(
     benchmark: str, turns: Sequence, *, role: Role | None
 ) -> str | None:
     """Return the newest turn output that carries an extractable answer.
 
     Scans ``turns`` newest-first and returns the first ``processed_output`` that
-    :func:`has_answer` accepts for ``benchmark``.
+    :func:`_answerful` accepts for ``benchmark``.
     :attr:`~trinity.types.Role.VERIFIER` turns are always skipped — the Verifier
     checks the solution, it never sources the committed answer. When ``role`` is
     given only turns of that role are considered; when ``role`` is ``None`` every
@@ -211,15 +228,35 @@ def _last_answerful_output(
         carries an extractable answer.
     """
     for tr in reversed(turns):
-        tr_role = getattr(tr, "role", None)
-        if tr_role == Role.VERIFIER:
+        if not _answerful(benchmark, tr):
             continue
-        if role is not None and tr_role != role:
+        if role is not None and getattr(tr, "role", None) != role:
             continue
-        txt = getattr(tr, "processed_output", "") or ""
-        if has_answer(benchmark, txt):
-            return txt
+        return getattr(tr, "processed_output", "") or ""
     return None
+
+
+def answerful_non_verifier_outputs(benchmark: str, turns: Sequence | None) -> list[str]:
+    """Every non-verifier turn output carrying an extractable answer, in turn order.
+
+    The population the HERO self-consistency proxy votes over
+    (:func:`trinity.optim.fitness.hero_quality`). Shares :func:`_answerful` with
+    committed-answer selection, so a Verifier's critique can never enter the vote —
+    the same discipline :func:`_committed_answer` applies to the *reference* answer.
+
+    Args:
+        benchmark: Benchmark identifier (case-insensitive).
+        turns: The trajectory's turns, oldest-first (``None`` is treated as empty).
+
+    Returns:
+        The matching ``processed_output`` strings, oldest-first (possibly empty).
+    """
+    key = (benchmark or "").strip().lower()
+    return [
+        getattr(tr, "processed_output", "") or ""
+        for tr in (turns or [])
+        if _answerful(key, tr)
+    ]
 
 
 def has_answer(benchmark: str, text: str) -> bool:
