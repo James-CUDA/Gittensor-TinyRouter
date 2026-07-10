@@ -78,8 +78,21 @@ def _sample_pool(benchmark: str, counts: Dict[str, int]) -> List[Any]:
 
 
 async def _cache_answers(items: List[Dict], pool, pool_models: List[str]) -> None:
-    """Call each model ONCE per question (temp=0) and cache the answer."""
+    """Call each model ONCE per question (temp=0) and cache the answer.
+
+    The cached answers back the 70%-weighted single-turn score, so they must be
+    produced with the SAME single-turn invocation the router is trained and
+    live-evaluated against: one WORKER-role turn with an empty transcript. This
+    mirrors ``trinity.eval._score_single_model`` and the pipeline's
+    ``session.run_trajectory`` (both go through ``build_messages``). Prompting the
+    model with a bare user message instead would cache answers to a different
+    prompt than the pipeline ever uses — the model gets no role contract — so the
+    cached (70%) and live (15%) components would measure different behaviours.
+    """
     import httpx
+
+    from trinity.roles.prompts import build_messages
+    from trinity.types import Role
 
     async with httpx.AsyncClient() as client:
         for item in items:
@@ -89,7 +102,7 @@ async def _cache_answers(items: List[Dict], pool, pool_models: List[str]) -> Non
                 try:
                     res = await pool.chat(
                         model_name,
-                        [{"role": "user", "content": item["question_text"]}],
+                        build_messages(Role.WORKER, item["question_text"], []),
                         max_tokens=4096, temperature=0.0, top_p=1.0,
                         client=client,
                     )
@@ -100,24 +113,30 @@ async def _cache_answers(items: List[Dict], pool, pool_models: List[str]) -> Non
 
 
 def _task_to_item(task: Any, index: int) -> Dict:
-    """Convert a trinity Task to a benchmark item dict (shape unchanged).
+    """Convert a trinity Task to a protocol on-disk benchmark item dict."""
+    from trinity.adapters import get_adapter
+    from trinity.adapters.hidden_item import from_adapter_task, to_protocol_item
 
-    ``index`` is the task's position in the sampled pool; it only feeds the
-    deterministic id fallback (``protocol.question_id``) for tasks without a
-    stable ``task_id``.
-    """
     benchmark = getattr(task, "benchmark", "math500") or "math500"
-    prompt = getattr(task, "prompt", "")
-    return {
-        "question_id": protocol.question_id(
-            benchmark, index, prompt, existing=getattr(task, "task_id", None)
-        ),
-        "question_text": prompt,
-        "task_type": protocol.task_type(benchmark),
-        "benchmark": benchmark,
-        "correct_answer": getattr(task, "answer", None),
-        "model_answers": {},
-    }
+    try:
+        adapter = get_adapter(benchmark)
+        canonical = from_adapter_task(adapter, task)
+        item = to_protocol_item(canonical)
+    except KeyError:
+        prompt = getattr(task, "prompt", "")
+        item = {
+            "question_id": protocol.question_id(
+                benchmark, index, prompt, existing=getattr(task, "task_id", None)
+            ),
+            "question_text": prompt,
+            "task_type": protocol.task_type(benchmark),
+            "benchmark": benchmark,
+            "correct_answer": getattr(task, "answer", None),
+            "model_answers": {},
+        }
+    if "model_answers" not in item:
+        item["model_answers"] = {}
+    return item
 
 
 async def build_benchmark(benchmark: str, output_dir: str, password: str) -> str:
