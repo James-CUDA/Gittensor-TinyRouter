@@ -5,6 +5,7 @@ from pathlib import Path
 
 import yaml
 
+from .params import ParamSpec
 from .policy import CoordinatorPolicy
 
 __all__ = ["load_coordinator_section", "build_policy_from_config"]
@@ -20,7 +21,7 @@ def build_policy_from_config(
     *,
     n_models: int,
     n_roles: int | None = None,
-) -> tuple[CoordinatorPolicy, object]:
+) -> tuple[CoordinatorPolicy, ParamSpec]:
     """Build a :class:`CoordinatorPolicy` from a coordinator config dict."""
     kwargs: dict = dict(
         model_name=cc["encoder_model"],
