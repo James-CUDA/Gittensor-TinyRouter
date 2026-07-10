@@ -18,6 +18,28 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-07-11 — Audit random-routing baseline was non-reproducible (shared rng under asyncio.gather)  #mistake #finding #decision
+
+**Context:** `scripts/audit_eval.py` is the SEALED, run-once "honest, ungameable"
+number. Its random-routing baseline averages 100 seeds; each seed fans all tasks
+out through `asyncio.gather`.
+**Expected:** a fixed seed → a byte-reproducible `random_routing` score.
+**Actual:** it wasn't. `_RandomAuditPolicy` held one shared `self.rng` and every
+concurrently-gathered trajectory drew from it, so turn-2+ routing draws were
+consumed in **network-completion order**, not seed order — the exact bug
+`trinity.eval.RandomPolicy` was already fixed for (via `task_rng(seed, task_id)`),
+but the audit script kept the old shared-rng form.
+**Root cause:** `decide` used `self.rng` and ignored the per-trajectory `rng`
+`run_trajectory` passes through; the audit loop never supplied one.
+**Fix / decision:** mirror `trinity.eval` — `decide` draws from the passed
+`rng` (instance rng only as a fallback), and the loop passes
+`rng=task_rng(seed_s, t.task_id)` per trajectory, so routing depends only on
+`(seed, task_id)` and is invariant to asyncio scheduling. Covered by
+`tests/test_audit_random_routing_seed.py` (torch-free: the policy is pure).
+**Follow-up:** separately, the audit "held-out" guarantee is soft — it samples the
+`train` split under a different seed rather than a provably-disjoint partition; a
+real holdout partition is a larger, separate change.
+
 ## 2026-07-10 — R1/R2 gave TRINITY 5x the token budget of the baselines it beat  #mistake #gotcha
 **Context:** auditing `trinity/eval.py` against SPEC §1.3 before trusting an R1/R2 verdict.
 **Expected:** the single-model baselines are budget-matched to TRINITY, as SPEC §1.3.4 requires: *"run each single model at `max_tokens = 20,480` (5×) so the single-vs-TRINITY comparison is fair, matching the paper's 5× protocol."* The same 5× appears in the 2026-06-22 SPEC-decisions entry and in SPEC's own R1 row (*"budget-matched 5×"*).
