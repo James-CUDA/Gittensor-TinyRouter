@@ -27,6 +27,13 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 **Fix / decision:** `usage = data.get("usage") or {}` — covers absent and null identically, exactly mirroring the `if content is None` guard #72 added in the same file. One line; no behaviour change for a populated, empty, or absent usage block.
 **Follow-up:** `choice = data["choices"][0]` and `choice["message"]` are still index/`[]` access, so a response with no `choices` would `KeyError`. That is a genuinely malformed response (not a documented provider behaviour like `usage: null`), so I left it — a separate, weaker concern.
 
+## 2026-07-10 — Added an offline view of efficiency and composite-score tradeoffs  #finding #decision
+**Context:** contributors could see hidden/live accuracy, but the competition's 10% efficiency term still lived only inside `scripts/pr_eval.py::_compute_score`, making turn-efficiency tradeoffs hard to inspect offline.
+**Expected:** a miner can estimate the composite score and inspect turns-per-correct-answer without opening a PR or touching the hidden evaluator.
+**Actual:** there was no repo-local utility for that analysis; the formula existed only in the maintainer scorer.
+**Fix / decision:** add `src/trinity/efficiency.py` plus `scripts/efficiency_report.py` as an offline mirror of the current score formula, with per-answer efficiency summaries (`turns_per_correct`, optional calls/cost per correct) and tests that pin the implementation to `pr_eval` when importable.
+**Follow-up:** if the competition scoring formula changes, `pr_eval` and `trinity.efficiency` must be updated together so offline analysis stays aligned with the maintained scorer.
+
 ---
 
 ## 2026-07-10 — The head never read `<Head Input>`; the EOS trick was a no-op  #mistake #gotcha #repro
