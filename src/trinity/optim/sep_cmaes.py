@@ -32,6 +32,8 @@ from typing import Callable
 
 import numpy as np
 
+from trinity.optim.lra import LRAConfig, LRAState, apply_learning_rate, capture_baseline_opts
+
 _MAX_NUMPY_SEED: int = 2**32 - 1
 
 # pycma's own doc for its `seed` option reads:
@@ -103,6 +105,7 @@ class SepCMAES:
         popsize: int | None = None,
         seed: int = 0,
         maxiter: int = 60,
+        lra: LRAConfig | None = None,
     ) -> None:
         """Initialize the separable CMA-ES strategy.
 
@@ -119,6 +122,8 @@ class SepCMAES:
                 built with the same seed sample identical populations. Seeding
                 sets the global ``numpy.random`` state.
             maxiter: Maximum number of generations ``T`` (TRINITY default 60).
+            lra: Optional learning-rate adaptation config. ``None`` or
+                ``LRAConfig(enabled=False)`` preserves legacy behavior.
 
         Raises:
             ValueError: If ``x0`` is provided with a shape other than ``(n,)``,
@@ -169,6 +174,15 @@ class SepCMAES:
         self._best_x: np.ndarray | None = None
         self._best_f: float = -math.inf
 
+        self._lra_cfg: LRAConfig | None = lra if (lra and lra.enabled) else None
+        self._lra_state: LRAState | None = LRAState() if self._lra_cfg else None
+        self._lra_baseline: dict[str, float] = (
+            capture_baseline_opts(self._es) if self._lra_cfg else {}
+        )
+        if self._lra_state and self._lra_cfg:
+            self._lra_state.reset(self._lra_cfg)
+            apply_learning_rate(self._es, self._lra_baseline, self._lra_state.eta)
+
     # ------------------------------------------------------------------ #
     # Core ask / tell interface
     # ------------------------------------------------------------------ #
@@ -215,6 +229,16 @@ class SepCMAES:
                 self._best_f = f
                 self._best_x = x.copy()
 
+        if self._lra_state and self._lra_cfg:
+            gen_mean = float(np.mean(fits))
+            self._lra_state.observe(
+                gen_mean,
+                self._lra_cfg,
+                self._es,
+                self._lra_baseline,
+                iteration=self.iteration,
+            )
+
     # ------------------------------------------------------------------ #
     # Introspection
     # ------------------------------------------------------------------ #
@@ -259,6 +283,13 @@ class SepCMAES:
         """Number of completed generations (``tell`` calls)."""
         return int(self._es.countiter)
 
+    @property
+    def lra_history(self) -> list[dict[str, float]]:
+        """Per-generation LRA diagnostics when adaptation is enabled."""
+        if self._lra_state is None:
+            return []
+        return list(self._lra_state.history)
+
 
 def run(
     objective: Callable[[np.ndarray], float],
@@ -270,6 +301,7 @@ def run(
     seed: int = 0,
     maxiter: int = 60,
     verbose: bool = False,
+    lra: LRAConfig | None = None,
 ) -> tuple[np.ndarray, float, list[dict]]:
     """Run separable CMA-ES to **maximize** ``objective`` and log per-iteration.
 
@@ -305,6 +337,7 @@ def run(
         popsize=popsize,
         seed=seed,
         maxiter=maxiter,
+        lra=lra,
     )
     history: list[dict] = []
 
@@ -322,6 +355,8 @@ def run(
             "gen_best_fitness": gen_best,
             "gen_mean_fitness": gen_mean,
         }
+        if opt.lra_history:
+            record["lra"] = opt.lra_history[-1]
         history.append(record)
         if verbose:
             print(

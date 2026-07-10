@@ -24,6 +24,7 @@ from .coordinator import params as P
 from .coordinator.policy import CoordinatorPolicy
 from .llm.openrouter_client import OpenRouterPool
 from .optim.fitness import FitnessConfig, evaluate_population
+from .optim.lra import LRAConfig
 from .optim.sep_cmaes import SepCMAES, default_popsize
 from .orchestration.dataset import load_tasks, sample_minibatch
 
@@ -61,11 +62,14 @@ async def train(args) -> dict:
     # Training-only fitness shaping (improvement #3). Defaults preserve the
     # original mean-binary fitness exactly. The eval path stays pure binary.
     fitness_cfg = FitnessConfig.from_dict(cfg.get("fitness"))
+    lra_cfg = LRAConfig.from_dict(sc.get("lra"))
     if getattr(args, "enable_reweight", False) and not fitness_cfg.enable_reweight:
         import dataclasses
         fitness_cfg = dataclasses.replace(fitness_cfg, enable_reweight=True)
     if fitness_cfg.enable_reweight or fitness_cfg.shaping_active:
         print(f"[train] fitness shaping ACTIVE: {fitness_cfg}")
+    if lra_cfg.enabled:
+        print(f"[train] LRA-CMA-ES ACTIVE: {lra_cfg}")
 
     pool = OpenRouterPool(args.models)
     pool_models = list(pool.models)
@@ -105,6 +109,7 @@ async def train(args) -> dict:
         popsize=popsize,
         seed=args.seed,
         maxiter=generations,
+        lra=lra_cfg,
     )
     print(f"[train] sep-CMA-ES: λ={es.popsize}, σ0={sigma0}, m_cma={m_cma}, T={generations}, "
           f"budget≈{es.popsize * m_cma * generations}")
@@ -154,6 +159,8 @@ async def train(args) -> dict:
             "best_fitness": float(best_f),
             "seconds": round(time.time() - t0, 1),
         }
+        if es.lra_history:
+            rec["lra"] = es.lra_history[-1]
         history.append(rec)
         print(f"[gen {gen:3d}] mean={rec['gen_mean_fitness']:.3f} "
               f"max={rec['gen_max_fitness']:.3f} best={rec['best_fitness']:.3f} "
@@ -173,6 +180,7 @@ async def train(args) -> dict:
         "m_cma": m_cma,
         "generations": gen,
         "best_fitness": float(best_f),
+        "seed": args.seed,
         "run_dir": str(run_dir),
     }
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2))

@@ -56,6 +56,13 @@ sep_cmaes:
     metric: "accuracy"                  # mean binary reward R(tau) in {0,1} over m_cma instances
     cost_penalty: 0.0                   # no explicit length/cost penalty (bounded by 4096 x K)
   budget_b_env: 31680                   # = m_cma * lambda * generations = 16 * 33 * 60
+  lra:                                   # learning-rate adaptation (IMPROVEMENTS.md #4)
+    enabled: false                        # default off — preserves legacy training runs
+    target_snr: 1.0
+    beta: 0.2
+    eta_min: 0.05
+    eta_max: 1.0
+    initial_eta: 1.0
 
 # Training-only fitness shaping (improvement #3). Read by trinity.optim.fitness
 # .FitnessConfig.from_dict. DEFAULTS BELOW PRESERVE THE ORIGINAL MEAN-BINARY
