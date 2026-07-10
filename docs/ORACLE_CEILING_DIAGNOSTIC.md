@@ -47,7 +47,7 @@ When `routing_oracle - best_single_crossfit <= 0`, the ratio is **`NaN`** (no ac
 headroom), not zero. Callers must check the headroom CI before interpreting the gap.
 
 Implementation: `scripts/oracle_ceiling.py::router_gap_closed`. Regression:
-`tests/test_router_gap_closed_baseline.py`.
+`tests/test_oracle_ceiling.py`.
 
 ## 2. The two ways a naive version lies (and the fixes)
 
