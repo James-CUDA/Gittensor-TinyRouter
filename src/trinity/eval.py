@@ -27,9 +27,6 @@ from .eval_harness import (
     score_single_model,
     task_rng,
 )
-from .eval_harness import reduce_scores as _reduce_scores
-from .eval_harness import score_policy as _score_policy
-from .eval_harness import score_single_model as _score_single_model
 from .llm.openrouter_client import OpenRouterPool
 
 __all__ = [
