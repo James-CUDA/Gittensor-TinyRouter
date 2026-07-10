@@ -18,20 +18,57 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
-## 2026-07-10 — CI was red on `main` the moment it landed  #mistake #gotcha #decision
-**Context:** every open PR showed a failing required check. Checked whether the PRs were at fault.
-**Expected:** `main` is green, so a red PR check means the PR broke something.
-**Actual:** `main` itself was red at `cf9da4d`, on two of the three CI steps. A contributor could not distinguish "I broke CI" from "CI was already broken".
-- **Mypy: 11 errors in 8 files.** `ci.yml` (#51) landed *after* the code it gates, so the step went straight to red on its first run. Nothing regressed; the errors became visible.
-- **Pytest: 2 failures.** `tests/test_build_benchmark_cache_prompt.py` (added by #54) still called `_cache_answers(items, ...)`, but #62 changed the signature to `_cache_answers(task_item_pairs, ...)` so the adapter registry could render each prompt. `ValueError: too many values to unpack (expected 2)`. The production caller passes pairs correctly — only the test was stale.
-**Root cause:** three landings in quick succession, each green in isolation. #51 introduced the gate, #54 added a test against one signature, #62 changed that signature. No single PR was wrong; the gate simply had nothing enforcing it before it existed.
-**Fix / decision:** get `mypy src/ scripts/repo_governance/` to zero and repair the stale test, as one "make the gate green" change with no behavioural content. The mypy errors fell into three groups:
-1. **Heterogeneous `kwargs` dicts** (`session.py`, `workflow.py`) — `dict(temperature=..., max_tokens=...)` infers `dict[str, float]`, then a `str` or a client object is assigned in. Annotated `dict[str, Any]`.
-2. **Redundant `type: ignore` comments** (4 lazy imports) — `ignore_missing_imports = true` already covers a box without `datasets`/`cma`, and CI installs them, so `warn_unused_ignores` flagged the guards. Removed.
-3. **Real narrowing gaps** — `parse_workflow` returns `Workflow | None` alongside an `ok` flag, and `ok` reaching `run_workflow` does not prove the workflow is non-`None` *to a checker*. Made the invariant explicit (`if ok and wf is not None` / `if not ok or wf is None`). Plus two `transformers` `.to()` call-sites and a `decode() -> str | list[str]` union, bound through `Any` / `str()` rather than silenced with an ignore.
-**Important correction:** I first read group 3 as a latent `AttributeError`. It is not. Every failure path in `parse_workflow` returns `(None, False)`, so `ok` **does** imply a workflow at runtime. The guards are there to make an invariant the checker cannot see explicit — a readability and type-safety fix, not a bug fix. Worth stating plainly so nobody "fixes" a runtime bug that was never there.
-**Rebase note:** while this sat unlanded, #82 repaired the stale cache test independently, and #73 (the MMLU split fix) introduced a *new* mypy error at `loaders.py:459` — `tasks` was rebound from `list[Task] | None` to the toy list, so `list(tasks)` no longer type-checks. Runtime is fine (`used_toy` guards it); the fix binds the fallback to a separate name so `tasks` is never optional. That is the gate working as intended: a green-then-red transition caught a type regression the same day it landed.
-**Follow-up:** the gate now enforces itself. Separately, the `govern` job still fails on every fork PR (403 on the labels API, since `pull_request` grants a read-only token to forks) — that is a workflow-permissions decision for the maintainer, tracked apart from this.
+## 2026-07-10 — R1/R2 gave TRINITY 5x the token budget of the baselines it beat  #mistake #gotcha
+**Context:** auditing `trinity/eval.py` against SPEC §1.3 before trusting an R1/R2 verdict.
+**Expected:** the single-model baselines are budget-matched to TRINITY, as SPEC §1.3.4 requires: *"run each single model at `max_tokens = 20,480` (5×) so the single-vs-TRINITY comparison is fair, matching the paper's 5× protocol."* The same 5× appears in the 2026-06-22 SPEC-decisions entry and in SPEC's own R1 row (*"budget-matched 5×"*).
+**Actual:** the baselines got **1×**. `evaluate` passed `max_tokens=args.max_tokens` (default 4096) to `_score_single_model`, which spends it on **one** turn. TRINITY got `run_kwargs = dict(max_turns=5, max_tokens=4096)` — up to 5 turns at 4096 each, i.e. 20,480. So every "TRINITY > best single model" result was produced by a system with five times the token budget of the systems it was compared against.
+**Root cause:** the budget rule lives in `--max-turns`, not in `--max-tokens`, so "give the baseline the same total" requires multiplying the two — and the one place that had to do the multiplication simply forwarded `args.max_tokens` to both paths. Both numbers look right in isolation. Nothing in the code referenced the 5×, so nothing enforced it; the constraint existed only in prose, in two documents.
+**Fix / decision:** add `single_model_budget(max_tokens, max_turns) -> max_tokens * max_turns` and hand its result to the baselines. Derived from `max_turns` rather than hard-coding `5`, so the match survives someone passing `--max-turns 3`; at the defaults it is exactly the 20,480 SPEC names. The routed path is untouched — TRINITY still spends `max_tokens` *per turn*. `evaluate` now prints the matched budget, so a reader of the logs can see the comparison was fair rather than trusting that it was.
+**Why this one stings:** R1/R2 is the paper's headline claim and the repo's reason to exist. The invariant check at the bottom of `evaluate` (`s_trinity > best_single`) was measuring, in part, a budget difference. Every R1/R2 number in this JOURNAL predating this fix was produced under the 1× baseline and should be read with that in mind — including the 2026-06-23 multi-task headline (*"best FIXED single model avg ≈ 0.65 … per-task TRINITY avg ≈ 0.75"*). Re-running eval is cheap (the JOURNAL prices it at ~$1.3); the numbers should be regenerated before any of them are quoted.
+**Follow-up:** `scripts/audit_eval.py` builds its own `single::` baselines and needs the same treatment; `pr_eval.py`'s cached single-turn component is a separate contract (it caches one WORKER turn per question) and is deliberately not changed here.
+
+---
+
+## 2026-07-10 — Cost-ledger verifier hashed a different JSON string than the writer  #mistake #decision
+**Context:** checking the token-cost ledger path used by training, `cost_report.py`,
+and submission packing.
+**Expected:** a ledger written by `OpenRouterPool._ledger_append` verifies in
+`scripts/cost_report.py --ledger`, and the submission packer prices the same
+entries from the same parsed rows.
+**Actual:** legitimate ledgers failed verification. The writer hashed a fixed,
+compact payload string (`{"m":"...","p":...,"c":...}` in that key order), while
+the verifier rebuilt the payload with `json.dumps(..., sort_keys=True)`, which
+changes the byte string and therefore the hash. `pack_submission.py` then read
+the same file through a separate ad-hoc path, so the write, verify, and summarize
+steps were not sharing one canonical implementation.
+**Root cause:** the hash-chain format existed only implicitly inside the writer.
+Verifiers reimplemented it differently, and nothing enforced one shared payload
+encoding.
+**Fix / decision:** add `trinity.llm.cost_ledger` as the single source of truth
+for payload formatting, chained hashing, line parsing, ledger verification, and
+append helpers. Route `openrouter_client`, `cost_report.py`, and
+`pack_submission.py` through it, and cover the regression with
+`tests/test_cost_ledger.py`.
+**Follow-up:** the append helper writes text-only handles; keeping the test hook
+typed as `TextIO` avoids implying binary support the implementation does not have.
+
+## 2026-07-10 — Rate-limit gate counted wins, not attempts  #mistake #finding #decision
+
+**Context:** follow-up from the UTC timestamp fix on Gate 1 (`_check_rate_limit`).
+`SUBMITTING.md` says "1 submission per benchmark per week".
+**Expected:** any evaluated submission consumes the weekly slot, win or lose.
+**Actual:** `_update_leaderboard` (the only writer into `history`) ran only on
+`score > best_score`. Score-rejections and later gate failures never touched the
+log, so Gate 1 only saw prior *wins*. A miner could lose, immediately resubmit,
+and probe the hidden benchmark without waiting 7 days.
+**Root cause:** rate limit reused the win-only `history` log instead of an
+attempt log.
+**Fix / decision:** record an `attempts` entry as soon as Gate 1 passes (slot
+consumed even if Gate 2+ fails or the score loses). Gate 1 reads `attempts`,
+falling back to legacy `history` when `attempts` is absent. First write seeds
+`attempts` from existing `history` so recent winners stay rate-limited after
+rollout. Covered by `tests/test_pr_eval_rate_limit.py`.
+**Follow-up:** none for this hole.
 
 ---
 
@@ -89,6 +126,20 @@ pinning the WORKER-turn behaviour, now through the adapter). The `_cache_answers
 WORKER-turn fix itself is intact after #62; only the test was stale. Full suite
 green again.
 **Follow-up:** the offline PR CI in #52 would have caught this; worth landing.
+
+## 2026-07-10 — govern job 403 on fork PR label write-back  #mistake #decision
+
+**Context:** PR-bot governance (`pr-bot.yml`) from #51; every fork PR failed the
+`govern` check on `ensure_labels.py` (issue #84, part 1). Routing-template false
+positives were fixed separately in #86 (issue #85).
+**Expected:** fork PRs run deterministic analysis even when `GITHUB_TOKEN` cannot
+create labels or post comments.
+**Actual:** `ensure_labels.py` raised on HTTP 403; `run_pr_bot.py` returned exit 1
+when label write-back was rejected.
+**Fix / decision:** treat 403 on label create / PR write-back as a warning (exit 0);
+analysis output is still printed. Routing detection unchanged on `main` (#86).
+**Follow-up:** if labels must be applied to fork PRs automatically, add a minimal
+`pull_request_target` workflow that only calls the labels API.
 
 ## 2026-07-10 — Duplicate-detection gate (Gate 3) defeated by re-rolling SVF scales  #mistake #finding #decision
 
@@ -191,10 +242,8 @@ of UTC evade the rate limit (their prior submission reads as older than it is).
 timezone-independent. Covered by `tests/test_pr_eval_rate_limit.py` (asserts the
 true UTC epoch via `datetime(..., tzinfo=utc)`, and — where `time.tzset` exists —
 re-checks under forced non-UTC zones).
-**Follow-up:** none for this bug. Separately noted while reading the gate: only
-*approved* submissions are appended to `history`, so the rate limit currently
-counts prior *wins*, not prior *attempts* — a larger design question left for its
-own change.
+**Follow-up:** none for this bug. (Superseded 2026-07-10: rate limit now
+counts attempts via the `attempts` log, not only approved wins.)
 
 ---
 

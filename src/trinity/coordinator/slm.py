@@ -97,9 +97,8 @@ class CoordinatorEncoder:
         self._dtype = self._resolve_dtype(dtype)
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        # `PreTrainedModel.to` is typed through an overloaded wrapper that a checker
-        # cannot resolve for a device *string*; bind through `Any` rather than
-        # silencing the call site.
+        # `from_pretrained` is a decorated classmethod, so its return type does not
+        # carry `.to`; bind through Any before moving the module to the device.
         model: Any = AutoModelForCausalLM.from_pretrained(
             model_name,
             torch_dtype=self._dtype,

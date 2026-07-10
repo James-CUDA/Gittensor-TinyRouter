@@ -74,11 +74,7 @@ async def run_trajectory(
         agent_name = pool_models[agent_idx % len(pool_models)]
 
         messages = _prompts.build_messages(role, base_prompt, traj.turns)
-        # Heterogeneous by construction: floats, an int, an httpx client, and a
-        # reasoning string all travel to `pool.chat` in one bag.
-        kwargs: dict[str, Any] = dict(
-            temperature=temperature, top_p=top_p, max_tokens=max_tokens
-        )
+        kwargs: dict[str, Any] = dict(temperature=temperature, top_p=top_p, max_tokens=max_tokens)
         if client is not None:
             kwargs["client"] = client
         if reasoning is not None:
