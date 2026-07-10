@@ -73,6 +73,20 @@ WORKER-turn fix itself is intact after #62; only the test was stale. Full suite
 green again.
 **Follow-up:** the offline PR CI in #52 would have caught this; worth landing.
 
+## 2026-07-10 — govern job 403 on fork PR label write-back  #mistake #decision
+
+**Context:** PR-bot governance (`pr-bot.yml`) from #51; every fork PR failed the
+`govern` check on `ensure_labels.py` (issue #84, part 1). Routing-template false
+positives were fixed separately in #86 (issue #85).
+**Expected:** fork PRs run deterministic analysis even when `GITHUB_TOKEN` cannot
+create labels or post comments.
+**Actual:** `ensure_labels.py` raised on HTTP 403; `run_pr_bot.py` returned exit 1
+when label write-back was rejected.
+**Fix / decision:** treat 403 on label create / PR write-back as a warning (exit 0);
+analysis output is still printed. Routing detection unchanged on `main` (#86).
+**Follow-up:** if labels must be applied to fork PRs automatically, add a minimal
+`pull_request_target` workflow that only calls the labels API.
+
 ## 2026-07-10 — Duplicate-detection gate (Gate 3) defeated by re-rolling SVF scales  #mistake #finding #decision
 
 **Context:** auditing the anti-cheat gates in `scripts/pr_eval.py`. Gate 3
