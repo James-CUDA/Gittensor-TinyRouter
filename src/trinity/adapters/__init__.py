@@ -16,9 +16,17 @@ the interface and :mod:`trinity.adapters.registry` for the lookup.
 """
 from __future__ import annotations
 
-from .base import BenchmarkAdapter, TaskType
-from .builtin import DelegatingBenchmarkAdapter, register_builtin_adapters
+from .base import BenchmarkAdapter, ScoringMode, TaskType
+from .benchmarks import (
+    GpqaAdapter,
+    LiveCodeBenchAdapter,
+    Math500Adapter,
+    MmluAdapter,
+    register_builtin_adapters,
+)
+from .builtin import DelegatingBenchmarkAdapter, register_livecodebench_v6_adapter
 from .livecodebench import LiveCodeBenchV6Adapter
+from .mmlu_pro import MmluProAdapter, register_mmlu_pro_adapter
 from .registry import (
     available_adapters,
     clear_registry,
@@ -26,20 +34,44 @@ from .registry import (
     is_registered,
     register_adapter,
 )
+from .scoring import (
+    ScoringOutcome,
+    requires_execution,
+    score_item,
+    supports_execution,
+)
+from .swebench import PatchReference, SweBenchAdapter, register_swebench_adapter
 
 __all__ = [
     "BenchmarkAdapter",
     "TaskType",
+    "ScoringMode",
+    "ScoringOutcome",
+    "score_item",
+    "supports_execution",
+    "requires_execution",
     "DelegatingBenchmarkAdapter",
     "LiveCodeBenchV6Adapter",
+    "Math500Adapter",
+    "MmluAdapter",
+    "GpqaAdapter",
+    "LiveCodeBenchAdapter",
+    "SweBenchAdapter",
+    "PatchReference",
+    "MmluProAdapter",
     "register_adapter",
     "get_adapter",
     "is_registered",
     "available_adapters",
     "clear_registry",
     "register_builtin_adapters",
+    "register_swebench_adapter",
+    "register_mmlu_pro_adapter",
 ]
 
 # Register the built-in benchmarks on import so `get_adapter("math500")` works
 # without the caller having to bootstrap the registry.
 register_builtin_adapters()
+register_livecodebench_v6_adapter()
+register_swebench_adapter()
+register_mmlu_pro_adapter()
