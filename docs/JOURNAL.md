@@ -42,6 +42,55 @@ still reports toy-set numbers as if real. Promoting that warning to an error und
 would close the class rather than this one instance. GPQA is also a gated HF repo — without auth
 the fallback still fires, now loudly but not fatally.
 
+## 2026-07-10 — Every submission receipt claimed `seed: 0`  #mistake #decision
+
+**Context:** closing the loose end from the `SepCMAES` seed fix (#38) — "a 'plausible CMA-ES
+fitness curve' is only re-derivable now that the default seed is honoured" (issue #109).
+**Expected:** `trinity.train --seed 7` then `pack_submission.py` yields `receipt.json` with
+`"seed": 7`.
+**Actual:** `"seed": 0`, for every run at every seed.
+**Root cause:** `pack_submission.build_receipt` read `summary.get("seed", 0)`, but `train.py`
+never wrote a `seed` key — its summary carried only `{benchmark, pool, n_total, popsize, m_cma,
+generations, best_fitness, run_dir}`. The `.get` default did all the work, silently.
+**Fix / decision:** `train.py` now records `"seed"` via a new pure `build_summary()` helper (the
+async `train()` needs a GPU pool, so the artifact schema had no offline test seam; the helper
+gives it one). `build_receipt` resolves the seed through `_resolve_seed()`, which records
+`null` — not `0` — when the key is absent. `[OUR CHOICE]` `0` is the wrong sentinel for "not
+recorded": it is indistinguishable from an honest `--seed 0` run, and per #38 pycma historically
+read seed `0` as *seed from the wall clock*. A packer that cannot name the seed should say so.
+`SUBMITTING.md` already advertised `receipt.json` as carrying the seed, so this restores a
+documented contract rather than inventing one.
+**Follow-up:** `pr_eval._validate_receipt` still does not *use* `receipt["seed"]`. Now that the
+field is trustworthy, Gate 4 could re-derive a claimed fitness curve from the seed instead of
+only checking its shape (monotonicity, start value, generation count). That would turn a
+plausibility heuristic into an actual reproduction check.
+
+## 2026-07-10 — Cost-ledger append reset to genesis after any chain break  #mistake #decision
+**Context:** follow-up audit of the unified cost-ledger module from #87/#88.
+Concurrent OpenRouter chats (`max_concurrency` default 8) append to the same
+JSONL with no lock; a tip race can leave one sibling line whose hash does not
+link.
+**Expected:** after a break, later appends still link to the **last line's**
+`h` (pre-#88 writer behaviour), so the tip keeps advancing and only the broken
+prefix fails verification.
+**Actual:** `append_ledger_entry` continued only when `verify_ledger_chain_text`
+returned valid. On any failure it set `prev_hash=""`, so every later write was
+a new genesis. `cost_report.py --ledger` kept failing; `pack_submission.py`
+silently reported `$0` once `valid` was false. The in-memory `file_handle=`
+hook also always read tip from disk (or `""`), so multi-append via `StringIO`
+could not build a chain either.
+**Root cause:** the #87/#88 unification correctly shared payload encoding, but
+the continue policy was tightened to "link only if whole file verifies" —
+stricter than the old writer and permanently worse under concurrency.
+**Fix / decision:** always take `prev_hash` from the last non-empty line
+(`tip_hash_from_text`); derive tip from the handle when `file_handle` is set;
+wrap disk read-tip+append in a sidecar exclusive lock so concurrent writers
+share one tip. Verification stays strict for reporting. Covered by
+`tests/test_cost_ledger.py` (broken-prefix append + `StringIO` chain).
+**Follow-up:** none for the genesis-reset hole. A broken prefix still fails
+full-chain verify (by design); operators can truncate to the last good prefix
+if they need a clean receipt.
+
 ## 2026-07-10 — pack_submission priced ledger with flat blended rate, not in/out split  #mistake #finding #decision
 **Context:** wiring training receipts (`scripts/pack_submission.py`) to the verified
 cost ledger after #87 landed `trinity.llm.cost_ledger`.
