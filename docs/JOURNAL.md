@@ -30,6 +30,25 @@ That error names neither the toy fallback nor the split that failed to load. Som
 **Root cause:** the loaders correctly *report* the substitution, but the only consumer for whom toy data is categorically unacceptable — the sealed, integrity-hashed hidden benchmark — never listened. `select_splits`' size check caught it by accident, one stage too late, because 2 < 220. A benchmark whose toy set happened to exceed the protocol's counts would have been sealed and hashed as real data with nothing but a warning on stderr.
 **Fix / decision:** escalate `ToyFallbackWarning` to an error inside `_sample_pool` (`warnings.simplefilter("error", ToyFallbackWarning)`), and re-raise it as a `RuntimeError` that names the benchmark, quotes the original warning, and states the remedy. The original warning is preserved as `__cause__` rather than swallowed. Chose this over threading an `allow_toy_fallback=False` flag up through `BenchmarkAdapter.load_tasks`: escalating the warning reuses the signal #73 already added, changes no interface, and cannot be forgotten by the next adapter — any loader that warns is covered for free.
 **Follow-up:** `trinity.train` has the same exposure — training on 2 toy questions produces a normal-looking receipt — but it goes through `load_tasks` rather than `_sample_pool`, so it needs its own decision about whether an offline smoke run should stay permitted. Deliberately out of scope here.
+## 2026-07-11 — Audit random-routing baseline was non-reproducible (shared rng under asyncio.gather)  #mistake #finding #decision
+
+**Context:** `scripts/audit_eval.py` is the SEALED, run-once "honest, ungameable"
+number. Its random-routing baseline averages 100 seeds; each seed fans all tasks
+out through `asyncio.gather`.
+**Expected:** a fixed seed → a byte-reproducible `random_routing` score.
+**Actual:** it wasn't. `_RandomAuditPolicy` held one shared `self.rng` and every
+concurrently-gathered trajectory drew from it, so turn-2+ routing draws were
+consumed in **network-completion order**, not seed order — the exact bug
+`trinity.eval.RandomPolicy` was already fixed for (via `task_rng(seed, task_id)`),
+but the audit script kept the old shared-rng form.
+**Root cause:** `decide` used `self.rng` and ignored the per-trajectory `rng`
+`run_trajectory` passes through; the audit loop never supplied one.
+**Fix / decision:** mirror `trinity.eval` — `decide` draws from the passed `rng`
+(instance rng only as a fallback), and the loop passes `rng=task_rng(seed_s,
+t.task_id)` per trajectory. Covered by `tests/test_audit_random_routing_seed.py`.
+**Follow-up:** the audit "held-out" guarantee is soft (samples train w/ a diff seed,
+not a provably-disjoint partition) — a larger, separate change.
+
 ## 2026-07-10 — A null `usage` block crashed a successful inference call  #mistake #gotcha
 **Context:** hardening `llm/openrouter_client.py` after #72 fixed the `content: null` case, to see whether the same present-but-null trap existed elsewhere in the response parsing.
 **Expected:** a 200-OK response with `"usage": null` records zero tokens and returns the completion.
