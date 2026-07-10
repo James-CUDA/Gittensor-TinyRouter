@@ -48,7 +48,9 @@ from trinity.submission.gates import (
     parse_utc_timestamp as _parse_utc_timestamp,
     rate_limit_entries as _rate_limit_entries,
     validate_ledger_receipt_cost,
+    validate_pack_schema,
     validate_receipt as _validate_receipt,
+    validate_theta_integrity,
     validate_weights as _validate_weights,
 )
 
@@ -466,7 +468,21 @@ async def evaluate_pr(pr_number: int, benchmark: str,
     if err:
         return _reject(err)
 
-    print("[pr_eval] All 5 pre-eval gates passed ✓\n")
+    # ══════════════════════════════════════════════════════════════
+    # GATE 6: Receipt schema / benchmark consistency (offline)
+    # ══════════════════════════════════════════════════════════════
+    err = validate_pack_schema(receipt, benchmark)
+    if err:
+        return _reject(err)
+
+    # ══════════════════════════════════════════════════════════════
+    # GATE 7: Theta pack/unpack integrity (offline)
+    # ══════════════════════════════════════════════════════════════
+    err = validate_theta_integrity(head_W, svf_scales)
+    if err:
+        return _reject(err)
+
+    print("[pr_eval] All 7 pre-eval gates passed ✓\n")
 
     # ══════════════════════════════════════════════════════════════
     # Load benchmark + encoder (GPU work starts here)
