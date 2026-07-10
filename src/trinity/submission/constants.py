@@ -1,0 +1,25 @@
+"""Frozen constants for routing-head submission validation."""
+
+from __future__ import annotations
+
+# Head W is 6 roles × 1024 hidden; SVF scales are 7 × 1024 singular values.
+EXPECTED_HEAD_PARAMS: int = 6 * 1024
+EXPECTED_SVF_PARAMS: int = 7 * 1024
+EXPECTED_TOTAL_PARAMS: int = EXPECTED_HEAD_PARAMS + EXPECTED_SVF_PARAMS
+EXPECTED_HEAD_SHAPE: tuple[int, int] = (6, 1024)
+
+MIN_TRAINING_COST_USD: float = 15.0
+MAX_WEIGHT_MAGNITUDE: float = 1e6
+DUPLICATE_HEAD_COSINE_THRESHOLD: float = 0.999
+
+RATE_LIMIT_WINDOW_DAYS: int = 7
+RATE_LIMIT_MAX_SUBMISSIONS: int = 1
+
+# Receipt cost vs verified ledger may differ by rounding across many rows.
+LEDGER_RECEIPT_COST_TOLERANCE_USD: float = 0.05
+
+DEFAULT_POOL_MODELS: tuple[str, ...] = (
+    "qwen3.5-35b-a3b",
+    "minimax-m3",
+    "deepseek-v4-flash",
+)

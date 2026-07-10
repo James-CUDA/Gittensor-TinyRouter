@@ -49,6 +49,25 @@ t.task_id)` per trajectory. Covered by `tests/test_audit_random_routing_seed.py`
 **Follow-up:** the audit "held-out" guarantee is soft (samples train w/ a diff seed,
 not a provably-disjoint partition) — a larger, separate change.
 
+## 2026-07-10 — Miners had no offline path to run pr_eval gates before opening a PR  #finding #decision
+**Context:** routing-head submissions were rejected only after opening a PR, when
+``scripts/pr_eval.py`` ran gates 1–4 embedded in an 850-line maintainer script.
+**Expected:** the same anti-cheat checks (rate limit, weights, duplicate head,
+receipt plausibility) runnable locally with no GPU and no OpenRouter spend.
+**Actual:** gate logic was not importable; miners discovered failures post-PR. A
+fifth gap also existed: ``receipt.json`` ``total_cost_usd`` was never
+cross-checked against a verified ``TRINITY_COST_LEDGER`` total, so fabricated
+receipts could disagree with the append-only ledger.
+**Fix / decision:** add ``trinity.submission`` (pack loader, gate classes,
+``PreflightRunner``) plus ``scripts/preflight_submission.py`` for miners.
+``pr_eval.py`` now imports the shared gates and runs gate 5
+(ledger/receipt cost consistency) before any GPU work. Shared OpenRouter pricing
+lives in ``trinity.llm.openrouter_pricing`` so ``cost_report.py``,
+``pack_submission.py``, and the new gate agree on dollar totals. Covered by
+``tests/test_submission_preflight.py``.
+**Follow-up:** wire the preflight CLI into CONTRIBUTING/SUBMITTING docs when the
+maintainer is ready to advertise it.
+
 ## 2026-07-10 — A null `usage` block crashed a successful inference call  #mistake #gotcha
 **Context:** hardening `llm/openrouter_client.py` after #72 fixed the `content: null` case, to see whether the same present-but-null trap existed elsewhere in the response parsing.
 **Expected:** a 200-OK response with `"usage": null` records zero tokens and returns the completion.
