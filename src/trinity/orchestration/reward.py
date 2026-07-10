@@ -33,6 +33,7 @@ module loads on a machine without it.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import subprocess
@@ -58,6 +59,7 @@ __all__ = [
     "MATH_BENCHMARKS",
     "CHOICE_BENCHMARKS",
     "CODE_BENCHMARKS",
+    "resolve_benchmark",
 ]
 
 # Benchmark routing tables. Keys are matched case-insensitively against
@@ -74,6 +76,39 @@ _CHOICE_LETTERS: str = "ABCDEFGHIJ"
 CODE_BENCHMARKS: frozenset[str] = frozenset(
     {"livecodebench", "lcb", "bigcodebench", "bigcode"}
 )
+
+# Some frozen hidden-benchmark items carry a versioned adapter *identity* as
+# their benchmark instead of a bare family key: the LiveCodeBench v6 adapter
+# serialises ``"livecodebench_v6"`` so the frozen item records which release
+# produced it (see ``adapters.livecodebench.LiveCodeBenchV6Adapter``). That
+# identity is not itself a dispatch key, so it must be mapped to the family its
+# checker is registered under; otherwise ``score_text``/``has_answer`` treat
+# every frozen v6 item as an unknown benchmark and raise. Kept as an explicit map
+# (never fuzzy suffix-stripping) so a real benchmark can never be mis-routed.
+_BENCHMARK_ALIASES: dict[str, str] = {
+    "livecodebench_v6": "livecodebench",
+}
+
+
+def resolve_benchmark(benchmark: str) -> str:
+    """Normalize a benchmark identifier to its dispatch key.
+
+    Lower-cases and trims ``benchmark``, then maps a known versioned/adapter
+    *identity* (see ``_BENCHMARK_ALIASES``) onto the ``MATH``/``CHOICE``/``CODE``
+    dispatch key its checker is registered under. Unknown or already-canonical
+    keys are returned unchanged, so this is a safe no-op for the four shipped
+    benchmarks and for a genuinely unrecognized name (which still raises in
+    :func:`score_text`).
+
+    Args:
+        benchmark: Raw benchmark identifier, e.g. ``"livecodebench_v6"`` or
+            ``"MATH500"``.
+
+    Returns:
+        The canonical dispatch key, lower-cased and trimmed.
+    """
+    key = (benchmark or "").strip().lower()
+    return _BENCHMARK_ALIASES.get(key, key)
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +244,7 @@ def has_answer(benchmark: str, text: str) -> bool:
     """
     if not text:
         return False
-    key = (benchmark or "").strip().lower()
+    key = resolve_benchmark(benchmark)
     if key in CHOICE_BENCHMARKS:
         return extract_choice_letter(text) is not None
     if key in MATH_BENCHMARKS:
@@ -239,7 +274,7 @@ def score_text(benchmark: str, candidate: str, reference: object) -> float:
     Raises:
         ValueError: If ``benchmark`` is not recognized.
     """
-    key = (benchmark or "").strip().lower()
+    key = resolve_benchmark(benchmark)
     if key in MATH_BENCHMARKS:
         return 1.0 if _check_math(candidate, reference) else 0.0
     if key in CHOICE_BENCHMARKS:
@@ -377,11 +412,16 @@ def normalize_math_answer(ans: str | None) -> str:
     s = s.strip()
     if s.startswith("="):
         s = s[1:].strip()
-    # Strip a single outer pair of \{ \} or { }.
-    s = re.sub(r"^\\?\{(.*)\\?\}$", r"\1", s).strip()
-    # \frac{a}{b} -> a/b
-    s = re.sub(r"\\d?frac\s*\{([^{}]+)\}\s*\{([^{}]+)\}", r"(\1)/(\2)", s)
-    s = re.sub(r"\\d?frac\s*(\d)\s*(\d)", r"\1/\2", s)
+    # Strip a single outer pair of \{ \} or { }. The capture is LAZY so the
+    # trailing optional backslash can consume a "\}" escape; a greedy ".*" eats it
+    # first, leaving a stray backslash ("\{1,2\}" -> "1,2\") that fails to match a
+    # plainly-braced reference. Set-notation answers (\boxed{\{1,2,3\}}) hit this.
+    s = re.sub(r"^\\?\{(.*?)\\?\}$", r"\1", s).strip()
+    # \frac{a}{b} -> a/b. The [dt]? matches the whole textstyle/displaystyle
+    # fraction family — \frac, \dfrac and \tfrac all render the same value, so they
+    # must normalize identically (else \tfrac{3}{4} is a false negative vs \dfrac).
+    s = re.sub(r"\\[dt]?frac\s*\{([^{}]+)\}\s*\{([^{}]+)\}", r"(\1)/(\2)", s)
+    s = re.sub(r"\\[dt]?frac\s*(\d)\s*(\d)", r"\1/\2", s)
     s = s.replace(r"\cdot", "*").replace(r"\times", "*")
     s = re.sub(r"\s+", "", s)
     # LaTeX digit grouping "1{,}000" -> "1,000" so the comma-strip below removes it
@@ -432,18 +472,28 @@ def _as_number(s: str) -> float | None:
     return None
 
 
-def math_equal(a: str | None, b: str | None, *, rel_tol: float = 1e-6) -> bool:
+def math_equal(a: str | None, b: str | None, *, abs_tol: float = 1e-6) -> bool:
     """Compare two math answers for equality.
 
     Resolution order:
       1. Exact match after :func:`normalize_math_answer`.
-      2. Numeric match within ``rel_tol`` (handles ``0.5`` vs ``1/2`` etc.).
+      2. Numeric match within ``abs_tol`` -- an ABSOLUTE tolerance that only
+         bridges rounded float representations of the *same* value (e.g.
+         ``0.333333`` vs ``1/3``), never merging genuinely different numbers.
       3. Symbolic equality via ``sympy`` if it is importable (guarded).
+
+    The tolerance is deliberately absolute, not magnitude-scaled. The previous
+    ``rel_tol * max(1, |a|, |b|)`` threshold grew with the answer's size, so it
+    reached ``>= 1`` once ``|value| >= 1e6`` and graded off-by-one (or larger)
+    large integers as correct (issue #141). MATH500 contains such large-integer
+    answers; AIME (0-999) masked the bug. An absolute tolerance keeps the same
+    behaviour for the small/near-unit answers the bridge was written for while
+    comparing large answers exactly.
 
     Args:
         a: First answer (typically the candidate).
         b: Second answer (typically the reference).
-        rel_tol: Relative tolerance for the numeric comparison.
+        abs_tol: Absolute tolerance for the numeric comparison.
 
     Returns:
         ``True`` if the two answers are judged equal.
@@ -456,8 +506,7 @@ def math_equal(a: str | None, b: str | None, *, rel_tol: float = 1e-6) -> bool:
     fa = _as_number(na)
     fb = _as_number(nb)
     if fa is not None and fb is not None:
-        scale = max(1.0, abs(fa), abs(fb))
-        if abs(fa - fb) <= rel_tol * scale:
+        if math.isclose(fa, fb, rel_tol=0.0, abs_tol=abs_tol):
             return True
 
     return _sympy_equal(na, nb)
