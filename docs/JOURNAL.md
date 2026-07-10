@@ -18,6 +18,25 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-07-10 — results_table multi-task summary crashed on a null system score  #mistake #gotcha
+
+**Context:** `scripts/results_table.py` aggregates `experiments/**/eval*.json` into
+the R1/R2/R4 summary. `load_rows` keeps a row when the `TRINITY` and `single::` keys
+are PRESENT.
+**Expected:** the summary renders for any row set `load_rows` accepts.
+**Actual:** `trin_avg = sum(max(r["trinity"] for r in by_bench[b]) ...)` (and the
+`random` twin) raise `TypeError: ... 'float' and 'NoneType'` when a row has
+`"TRINITY": null` (or lacks `random_routing`) — key present but value `None`. Key
+*presence* was checked; value *nullness* was not, so an older/partially-written
+eval file crashes the whole summary.
+**Root cause:** the per-benchmark reduction assumed every value non-null, unlike the
+per-row table which already guards with `x or 0`.
+**Fix / decision:** add `_bench_best(rows, key)` that maxes over non-null values
+(0.0 if a benchmark has none), and route both `trin_avg`/`rand_avg` through it —
+mirroring the per-row leniency. Covered by a null-score case in
+`tests/test_results_table.py`; the existing reduce-the-same-way tests are unchanged.
+**Follow-up:** none.
+
 ## 2026-07-10 — Passing a price table silently made the Conductor free  #mistake #gotcha
 **Context:** checking the pre-launch projections in `fugu/cost.py` before trusting them to size a paid GRPO run. The module's stated job is to stop us launching a paid job blind.
 **Expected:** `conductor_local=False` + `conductor_model="minimax-m3"` prices the Conductor's generation, whichever way the worker prices were supplied.
