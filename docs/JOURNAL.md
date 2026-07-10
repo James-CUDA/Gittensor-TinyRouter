@@ -30,6 +30,46 @@ That error names neither the toy fallback nor the split that failed to load. Som
 **Root cause:** the loaders correctly *report* the substitution, but the only consumer for whom toy data is categorically unacceptable — the sealed, integrity-hashed hidden benchmark — never listened. `select_splits`' size check caught it by accident, one stage too late, because 2 < 220. A benchmark whose toy set happened to exceed the protocol's counts would have been sealed and hashed as real data with nothing but a warning on stderr.
 **Fix / decision:** escalate `ToyFallbackWarning` to an error inside `_sample_pool` (`warnings.simplefilter("error", ToyFallbackWarning)`), and re-raise it as a `RuntimeError` that names the benchmark, quotes the original warning, and states the remedy. The original warning is preserved as `__cause__` rather than swallowed. Chose this over threading an `allow_toy_fallback=False` flag up through `BenchmarkAdapter.load_tasks`: escalating the warning reuses the signal #73 already added, changes no interface, and cannot be forgotten by the next adapter — any loader that warns is covered for free.
 **Follow-up:** `trinity.train` has the same exposure — training on 2 toy questions produces a normal-looking receipt — but it goes through `load_tasks` rather than `_sample_pool`, so it needs its own decision about whether an offline smoke run should stay permitted. Deliberately out of scope here.
+## 2026-07-10 — Cost-ledger verifier hashed a different JSON string than the writer  #mistake #decision
+**Context:** checking the token-cost ledger path used by training, `cost_report.py`,
+and submission packing.
+**Expected:** a ledger written by `OpenRouterPool._ledger_append` verifies in
+`scripts/cost_report.py --ledger`, and the submission packer prices the same
+entries from the same parsed rows.
+**Actual:** legitimate ledgers failed verification. The writer hashed a fixed,
+compact payload string (`{"m":"...","p":...,"c":...}` in that key order), while
+the verifier rebuilt the payload with `json.dumps(..., sort_keys=True)`, which
+changes the byte string and therefore the hash. `pack_submission.py` then read
+the same file through a separate ad-hoc path, so the write, verify, and summarize
+steps were not sharing one canonical implementation.
+**Root cause:** the hash-chain format existed only implicitly inside the writer.
+Verifiers reimplemented it differently, and nothing enforced one shared payload
+encoding.
+**Fix / decision:** add `trinity.llm.cost_ledger` as the single source of truth
+for payload formatting, chained hashing, line parsing, ledger verification, and
+append helpers. Route `openrouter_client`, `cost_report.py`, and
+`pack_submission.py` through it, and cover the regression with
+`tests/test_cost_ledger.py`.
+**Follow-up:** the append helper writes text-only handles; keeping the test hook
+typed as `TextIO` avoids implying binary support the implementation does not have.
+
+## 2026-07-10 — Rate-limit gate counted wins, not attempts  #mistake #finding #decision
+
+**Context:** follow-up from the UTC timestamp fix on Gate 1 (`_check_rate_limit`).
+`SUBMITTING.md` says "1 submission per benchmark per week".
+**Expected:** any evaluated submission consumes the weekly slot, win or lose.
+**Actual:** `_update_leaderboard` (the only writer into `history`) ran only on
+`score > best_score`. Score-rejections and later gate failures never touched the
+log, so Gate 1 only saw prior *wins*. A miner could lose, immediately resubmit,
+and probe the hidden benchmark without waiting 7 days.
+**Root cause:** rate limit reused the win-only `history` log instead of an
+attempt log.
+**Fix / decision:** record an `attempts` entry as soon as Gate 1 passes (slot
+consumed even if Gate 2+ fails or the score loses). Gate 1 reads `attempts`,
+falling back to legacy `history` when `attempts` is absent. First write seeds
+`attempts` from existing `history` so recent winners stay rate-limited after
+rollout. Covered by `tests/test_pr_eval_rate_limit.py`.
+**Follow-up:** none for this hole.
 
 ---
 
@@ -203,10 +243,8 @@ of UTC evade the rate limit (their prior submission reads as older than it is).
 timezone-independent. Covered by `tests/test_pr_eval_rate_limit.py` (asserts the
 true UTC epoch via `datetime(..., tzinfo=utc)`, and — where `time.tzset` exists —
 re-checks under forced non-UTC zones).
-**Follow-up:** none for this bug. Separately noted while reading the gate: only
-*approved* submissions are appended to `history`, so the rate limit currently
-counts prior *wins*, not prior *attempts* — a larger design question left for its
-own change.
+**Follow-up:** none for this bug. (Superseded 2026-07-10: rate limit now
+counts attempts via the `attempts` log, not only approved wins.)
 
 ---
 
