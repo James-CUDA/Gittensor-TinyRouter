@@ -13,14 +13,9 @@ module and cannot introduce an import cycle.
 
 HuggingFace dataset ids (when ``datasets`` + network are available):
 - math500       : ``HuggingFaceH4/MATH-500`` (fallback ``qwedsacf/competition_math``)
-- mmlu          : ``cais/mmlu`` (config ``all``; train -> ``auxiliary_train``)
+- mmlu          : ``cais/mmlu`` (config ``all``)
 - gpqa          : ``Idavidrein/gpqa`` (config ``gpqa_diamond``)
 - livecodebench : ``livecodebench/code_generation_lite`` (V1 train / V6 eval)
-
-Logical splits ("train"/"test") are resolved to each dataset's native split name
-by :mod:`trinity.adapters.split_policy` -- upstream names do not always match, and
-a mismatch used to demote the caller to the toy set silently. ``load_split`` emits
-a ``ToyFallbackWarning`` whenever the toy set stands in for real data.
 """
 from __future__ import annotations
 
@@ -114,13 +109,8 @@ def _load_math500_hf(split: str) -> list[Task] | None:
     return tasks or None
 
 def _load_mmlu_hf(split: str) -> list[Task] | None:
-    """MMLU loader. answer = correct option LETTER ("A".."D").
-
-    ``cais/mmlu`` exposes {test, validation, dev, auxiliary_train}; the logical
-    ``"train"`` split is resolved to ``auxiliary_train`` by
-    :func:`~trinity.adapters.split_policy.resolve_split`.
-    """
-    ds = _try_load_hf("cais/mmlu", name="all", split=resolve_split("mmlu", split))
+    """MMLU loader. answer = correct option LETTER ("A".."D")."""
+    ds = _try_load_hf("cais/mmlu", name="all", split=split or "test")
     if ds is None:
         return None
     tasks: list[Task] = []
@@ -440,33 +430,16 @@ def load_split(
     split: str,
     max_items: int | None,
     seed: int = 0,
-    allow_toy_fallback: bool = True,
 ) -> list[Task]:
     """Load a benchmark split as a deterministic list of :class:`Task`.
 
-    The canonical loading path: resolve the logical split to the dataset's native
-    split name (see :func:`_resolve_split`), try the benchmark's HuggingFace
-    loader (lazy/guarded); on any failure fall back to the built-in toy set; then
-    apply a ``seed``-seeded shuffle and truncate to ``max_items``. Repeated calls
-    with identical arguments return identical lists.
-
-    Falling back always emits a :class:`ToyFallbackWarning`, so a genuine load
-    failure can never masquerade as real data.
-
-    Args:
-        benchmark: One of :data:`SUPPORTED_BENCHMARKS`.
-        split: Logical split, e.g. ``"train"`` / ``"test"``.
-        max_items: Cap on the number of tasks returned; ``None`` means all.
-        seed: Seed controlling the deterministic shuffle.
-        allow_toy_fallback: When ``True`` (the default) an unavailable dataset
-            degrades to the toy set with a warning. When ``False`` it raises
-            instead -- use this for training and hidden-benchmark builds, where
-            toy data is never acceptable.
+    The canonical loading path: try the benchmark's HuggingFace loader (lazy/
+    guarded); on any failure fall back to the built-in toy set; then apply a
+    ``seed``-seeded shuffle and truncate to ``max_items``. Repeated calls with
+    identical arguments return identical lists.
 
     Raises:
         ValueError: If ``benchmark`` has no registered raw loader.
-        RuntimeError: If the dataset could not be loaded and ``allow_toy_fallback``
-            is ``False``.
     """
     key = (benchmark or "").strip().lower()
     if key not in _HF_LOADERS:
@@ -474,18 +447,13 @@ def load_split(
             f"Unknown benchmark {benchmark!r}. Supported: {SUPPORTED_BENCHMARKS}"
         )
 
-    tasks = _HF_LOADERS[key](split)
-    if not tasks:
-        # Offline / failed load -> built-in toy set. Never do this quietly: a
-        # wrong split name looks identical to intentional offline dev.
-        if not allow_toy_fallback:
-            raise RuntimeError(
-                f"Could not load benchmark {key!r} split {split!r} from "
-                f"HuggingFace, and allow_toy_fallback=False. Install `datasets`, "
-                f"check network access, and verify the split exists upstream."
-            )
-        warn_on_toy_fallback(key, split, used_toy=True)
+    logical_split = (split or "test").strip().lower()
+    resolved_split = resolve_split(key, logical_split)
+    tasks = _HF_LOADERS[key](resolved_split)
+    used_toy = not tasks
+    if used_toy:
         tasks = _toy_tasks(key)
+    warn_on_toy_fallback(key, logical_split, used_toy=used_toy)
 
     rng = random.Random(seed)
     tasks = list(tasks)

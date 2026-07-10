@@ -12,14 +12,16 @@ __all__ = [
 #: Logical split names that do not exist upstream, mapped per benchmark.
 #: MMLU-Pro publishes only ``validation`` and ``test``; training callers use
 #: ``train``, which we map to ``validation`` (issue #50).
+#: MMLU publishes ``auxiliary_train`` for training pool; logical ``train`` maps
+#: there (issue #35).
 _SPLIT_ALIASES: dict[str, dict[str, str]] = {
-    "mmlu_pro": {
-        "train": "validation",
-        "training": "validation",
-    },
     "mmlu": {
         "train": "auxiliary_train",
         "training": "auxiliary_train",
+    },
+    "mmlu_pro": {
+        "train": "validation",
+        "training": "validation",
     },
 }
 

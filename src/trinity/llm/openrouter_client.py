@@ -119,9 +119,17 @@ def _ledger_append(model: str, prompt_tokens: int, completion_tokens: int) -> No
 
 
 def _message_text(choice_message: dict) -> str:
-    """Normalize OpenRouter/OpenAI message content to plain text."""
+    """Normalize OpenRouter/OpenAI message content to plain text.
+
+    ``message.content`` is nullable in the chat-completions schema: providers send
+    ``null`` for an empty completion, or when the assistant message carries only
+    reasoning / tool-call metadata. "No text" normalizes to ``""`` — the same as a
+    missing key or an empty content list — never to the string ``"None"``.
+    """
 
     content = choice_message.get("content", "")
+    if content is None:
+        return ""
     if isinstance(content, str):
         return content
     if isinstance(content, list):

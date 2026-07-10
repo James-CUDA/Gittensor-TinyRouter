@@ -32,6 +32,25 @@ load_tasks('mmlu', 'test' ) -> n=5  real  ['mmlu-2', 'mmlu-1', ...]
 **Follow-up:** `gpqa` is gated on HF (`Idavidrein/gpqa`) and only publishes a `train` split, so loading its `test` split still falls back — now *with a warning* rather than silently. Deciding whether to deterministically partition that single split into train/test is left as separate work, as is threading `allow_toy_fallback=False` up through the `BenchmarkAdapter.load_tasks` contract into `train.py` and `scripts/build_benchmark.py`, which should never accept toy data. See #14 (freeze the sampling protocol) — that work needs split names that resolve at all, which is what this entry fixes.
 
 ---
+## 2026-07-10 — `main` went red: cache-prompt test not updated for the `_cache_answers` refactor  #mistake #gotcha
+
+**Context:** two changes landed close together — the cache-prompt fix (which added
+`tests/test_build_benchmark_cache_prompt.py`, asserting `_cache_answers` uses a
+WORKER turn) and the #62 refactor that routes caching through the adapter registry.
+**Expected:** green `main`.
+**Actual:** `pytest` fails 2/2 in `test_build_benchmark_cache_prompt.py`. #62 changed
+`_cache_answers(items, ...)` to `_cache_answers(task_item_pairs, ...)` — it now takes
+`(task, item)` pairs and renders the prompt via `get_adapter(task.benchmark)
+.build_prompt(task)` — but the test still called the old `(items, ...)` signature.
+**Root cause:** the test encoded the *old* call shape; the refactor updated the
+function and its caller but not this test, and with no CI gate the break merged.
+**Fix / decision:** update the test to the `(task, item)` pair API and assert the
+prompt equals `build_messages(Role.WORKER, adapter.build_prompt(task), [])` (still
+pinning the WORKER-turn behaviour, now through the adapter). The `_cache_answers`
+WORKER-turn fix itself is intact after #62; only the test was stale. Full suite
+green again.
+**Follow-up:** the offline PR CI in #52 would have caught this; worth landing.
+
 ## 2026-07-10 — Duplicate-detection gate (Gate 3) defeated by re-rolling SVF scales  #mistake #finding #decision
 
 **Context:** auditing the anti-cheat gates in `scripts/pr_eval.py`. Gate 3
@@ -73,6 +92,20 @@ seed=1: identical first population? True
 **Follow-up:** the wrapper still seeds the **global** `numpy.random` state — that is unchanged from before (pycma did it too), but it means constructing a `SepCMAES` perturbs unrelated numpy randomness in the process. Isolating it behind a `np.random.Generator` / pycma's `randn` option is worth doing separately. Also relevant to the receipt gate in `pr_eval.py`: a "plausible CMA-ES fitness curve" is only re-derivable now that the default seed is honoured.
 
 ---
+## 2026-07-10 — MMLU `train` split resolved via shared split_policy  #finding #decision
+
+**Context:** `load_tasks("mmlu", "train")` silently fell back to the 2-item toy set
+because `cais/mmlu` publishes `auxiliary_train`, not `train` (issue #35).
+**Expected:** training and benchmark builds load real MMLU rows for logical `train`.
+**Actual:** `_try_load_hf` swallowed the unknown-split error; `load_split` substituted
+the toy set with no warning.
+**Root cause:** split name forwarded verbatim; no alias table on the built-in loader path
+(MMLU-Pro already fixed this in `split_policy.py` for its adapter).
+**Fix / decision:** extend `split_policy._SPLIT_ALIASES` with `mmlu: train →
+auxiliary_train`, resolve in `loaders.load_split`, and emit `ToyFallbackWarning` when
+the toy set stands in. Keeps one split-resolution module for all benchmarks.
+**Follow-up:** GPQA still has only an upstream `train` split; deterministic holdout for
+logical `test` is separate work.
 
 ## 2026-07-10 — Hidden-benchmark cached answers used a bare prompt, not the WORKER turn  #mistake #finding #decision
 
