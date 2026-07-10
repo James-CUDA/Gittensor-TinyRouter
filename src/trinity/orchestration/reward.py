@@ -41,7 +41,7 @@ import tempfile
 from fractions import Fraction
 from typing import Sequence
 
-from trinity.types import Role, Task, Trajectory
+from trinity.types import Role, Trajectory
 
 __all__ = [
     "score",

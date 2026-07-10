@@ -23,7 +23,6 @@ import numpy as np
 import yaml
 
 from .adapters import get_adapter
-from .coordinator import params as P
 from .coordinator.policy import CoordinatorPolicy
 from .llm.openrouter_client import OpenRouterPool
 from .orchestration.session import run_trajectory
