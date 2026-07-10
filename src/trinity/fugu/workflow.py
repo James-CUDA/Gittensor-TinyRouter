@@ -563,14 +563,9 @@ async def propose_and_run(
     )
     p_pt = getattr(prop, "prompt_tokens", 0)
     p_ct = getattr(prop, "completion_tokens", 0)
-    if not ok:
-        return WorkflowRun(
-            workflow=None, parsed_ok=False, steps=[], final_answer="",
-            raw_proposal=prop.text, n_llm_calls=1,
-            prompt_tokens=p_pt, completion_tokens=p_ct,
-            model_tokens={CONDUCTOR_KEY: (p_pt, p_ct)},
-        )
-    if wf is None:
+    # parse_workflow returns (None, False) on failure; the `wf is None` arm is the
+    # same parse-gate failure, spelled out so the type checker can narrow `wf`.
+    if not ok or wf is None:
         return WorkflowRun(
             workflow=None, parsed_ok=False, steps=[], final_answer="",
             raw_proposal=prop.text, n_llm_calls=1,

@@ -451,14 +451,12 @@ def load_split(
     resolved_split = resolve_split(key, logical_split)
     loaded = _HF_LOADERS[key](resolved_split)
     used_toy = not loaded
-    if used_toy:
-        tasks: list[Task] = _toy_tasks(key)
-    else:
-        tasks = loaded
+    # Narrow on ``loaded`` itself: a separate ``used_toy`` bool cannot tell the
+    # type checker that the loader did not return None.
+    tasks = list(loaded) if loaded else _toy_tasks(key)
     warn_on_toy_fallback(key, logical_split, used_toy=used_toy)
 
     rng = random.Random(seed)
-    tasks = list(tasks)
     rng.shuffle(tasks)
 
     if max_items is not None:
