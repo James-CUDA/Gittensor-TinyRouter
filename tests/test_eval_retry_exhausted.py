@@ -1,12 +1,13 @@
 """Tests that one retry-exhausted trajectory degrades to 0.0 instead of aborting the eval.
 
-`_score_policy` and `_score_single_model` fan every task out through `asyncio.gather`.
-A single trajectory that exhausts its retries (e.g. a persistent `httpx.ReadTimeout`)
-used to propagate out of `gather`, out of the scorer, and out of `evaluate()` — throwing
-away the TRINITY score and every single-model baseline already computed this run. These
-tests pin the pessimistic-degrade contract that training (`trinity.optim.fitness`) already
-honours: a failed task counts as 0.0 and stays in the denominator, while an all-failed run
-raises rather than reporting a meaningless 0.0.
+``score_policy`` and ``score_single_model`` (in ``trinity.eval_harness``) fan every
+task out through ``asyncio.gather``. A single trajectory that exhausts its retries
+(e.g. a persistent ``httpx.ReadTimeout``) used to propagate out of ``gather``, out
+of the scorer, and out of ``evaluate()`` — throwing away the TRINITY score and every
+single-model baseline already computed this run. These tests pin the
+pessimistic-degrade contract that training (``trinity.optim.fitness``) already
+honours: a failed task counts as 0.0 and stays in the denominator, while an
+all-failed run raises rather than reporting a meaningless 0.0.
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ import pytest
 _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO / "src"))
 
-from trinity import eval as te
+from trinity.eval_harness import score_policy, score_single_model
 from trinity.types import Task
 
 
@@ -77,7 +78,7 @@ def _fake_run_trajectory(fail_ids: set[str]):
 def test_one_failed_trajectory_degrades_to_zero_not_abort(monkeypatch):
     """3 of 4 tasks answer correctly, one exhausts retries -> score 0.75, no abort."""
     monkeypatch.setattr("trinity.eval_harness.run_trajectory", _fake_run_trajectory({"2"}))
-    score = asyncio.run(te._score_policy(
+    score = asyncio.run(score_policy(
         _tasks(4), policy=None, pool=None, pool_models=[], adapter=_Adapter(), sample=False))
     assert score == pytest.approx(0.75)
 
@@ -85,7 +86,7 @@ def test_one_failed_trajectory_degrades_to_zero_not_abort(monkeypatch):
 def test_clean_run_matches_plain_mean(monkeypatch):
     """No failures -> identical to the old plain-mean path (happy path unchanged)."""
     monkeypatch.setattr("trinity.eval_harness.run_trajectory", _fake_run_trajectory(set()))
-    score = asyncio.run(te._score_policy(
+    score = asyncio.run(score_policy(
         _tasks(4), policy=None, pool=None, pool_models=[], adapter=_Adapter(), sample=False))
     assert score == pytest.approx(1.0)
 
@@ -94,15 +95,17 @@ def test_all_failed_raises_rather_than_reporting_zero(monkeypatch):
     """A dead API must raise, not report 0.0 accuracy that looks like a real measurement."""
     monkeypatch.setattr("trinity.eval_harness.run_trajectory", _fake_run_trajectory({"0", "1", "2", "3"}))
     with pytest.raises(RuntimeError, match="all 4 trajectories failed"):
-        asyncio.run(te._score_policy(
+        asyncio.run(score_policy(
             _tasks(4), policy=None, pool=None, pool_models=[], adapter=_Adapter(), sample=False))
 
 
 def test_single_model_baseline_survives_one_failure(monkeypatch):
     """The single-model baseline degrades one failed task to 0.0 as well."""
-    monkeypatch.setattr("trinity.roles.prompts.build_messages",
-                        lambda role, prompt, history: [{"role": "user", "content": prompt}])
-    score = asyncio.run(te._score_single_model(
+    monkeypatch.setattr(
+        "trinity.eval_harness.build_messages",
+        lambda role, prompt, history: [{"role": "user", "content": prompt}],
+    )
+    score = asyncio.run(score_single_model(
         _tasks(4), _Pool(fail_ids={"2"}), model="m0", adapter=_Adapter(),
         max_tokens=16, reasoning=None))
     assert score == pytest.approx(0.75)
@@ -111,7 +114,7 @@ def test_single_model_baseline_survives_one_failure(monkeypatch):
 def test_failure_count_is_printed(monkeypatch, capsys):
     """A degraded number is announced so it is never mistaken for a clean one."""
     monkeypatch.setattr("trinity.eval_harness.run_trajectory", _fake_run_trajectory({"2"}))
-    asyncio.run(te._score_policy(
+    asyncio.run(score_policy(
         _tasks(4), policy=None, pool=None, pool_models=[], adapter=_Adapter(), sample=False,
         label="TRINITY"))
     out = capsys.readouterr().out
