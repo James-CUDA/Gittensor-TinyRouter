@@ -36,7 +36,6 @@ per-row table which already guards with `x or 0`.
 mirroring the per-row leniency. Covered by a null-score case in
 `tests/test_results_table.py`; the existing reduce-the-same-way tests are unchanged.
 **Follow-up:** none.
-
 ## 2026-07-10 — GPQA logical `test` resolved via a deterministic holdout  #finding #decision
 
 **Context:** closing the follow-up left by the MMLU split fix below — "GPQA still has only an
