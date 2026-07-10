@@ -24,6 +24,8 @@ from typing import Any
 
 from trinity.types import Task
 
+from .split_policy import resolve_split, warn_on_toy_fallback
+
 #: Benchmarks with a dedicated raw loader in this module.
 SUPPORTED_BENCHMARKS: tuple[str, ...] = ("math500", "mmlu", "gpqa", "livecodebench")
 
@@ -445,9 +447,13 @@ def load_split(
             f"Unknown benchmark {benchmark!r}. Supported: {SUPPORTED_BENCHMARKS}"
         )
 
-    tasks = _HF_LOADERS[key](split)
-    if not tasks:
-        tasks = _toy_tasks(key)
+    logical_split = (split or "test").strip().lower()
+    resolved_split = resolve_split(key, logical_split)
+    loaded = _HF_LOADERS[key](resolved_split)
+    used_toy = not loaded
+    # Bind the toy fallback to a separate name so `tasks` is never `list[Task] | None`.
+    tasks: list[Task] = _toy_tasks(key) if used_toy else list(loaded or [])
+    warn_on_toy_fallback(key, logical_split, used_toy=used_toy)
 
     rng = random.Random(seed)
     tasks = list(tasks)
