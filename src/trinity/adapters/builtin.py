@@ -111,3 +111,21 @@ def register_builtin_adapters() -> None:
     for name in _BUILTIN_BENCHMARKS:
         if not is_registered(name):
             register_adapter(name, DelegatingBenchmarkAdapter(name))
+
+    # Dedicated first-class adapters (issues #12/#13) are not delegating
+    # wrappers: each pins a specific dataset release / schema and exposes it
+    # as metadata, so it registers alongside the shared-pipeline built-ins.
+    for adapter in _dedicated_adapters():
+        if not is_registered(adapter.name):
+            register_adapter(adapter.name, adapter)
+
+
+def _dedicated_adapters() -> tuple[BenchmarkAdapter, ...]:
+    """Instantiate the dedicated (non-delegating) built-in adapters.
+
+    Imported lazily so importing this module does not eagerly pull in every
+    dedicated adapter module at import time.
+    """
+    from .livecodebench import LiveCodeBenchV6Adapter
+
+    return (LiveCodeBenchV6Adapter(),)

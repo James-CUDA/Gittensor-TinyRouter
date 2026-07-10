@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from .base import BenchmarkAdapter, TaskType
 from .builtin import DelegatingBenchmarkAdapter, register_builtin_adapters
+from .livecodebench import LiveCodeBenchV6Adapter
 from .registry import (
     available_adapters,
     clear_registry,
@@ -30,6 +31,7 @@ __all__ = [
     "BenchmarkAdapter",
     "TaskType",
     "DelegatingBenchmarkAdapter",
+    "LiveCodeBenchV6Adapter",
     "register_adapter",
     "get_adapter",
     "is_registered",

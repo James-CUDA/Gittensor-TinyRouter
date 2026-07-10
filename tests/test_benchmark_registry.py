@@ -34,8 +34,9 @@ def test_builtins_registered_for_every_supported_benchmark():
     for name in SUPPORTED_BENCHMARKS:
         assert is_registered(name)
         assert isinstance(get_adapter(name), BenchmarkAdapter)
-    # The registry exposes exactly the supported benchmarks (no more, no less).
-    assert set(available_adapters()) == set(SUPPORTED_BENCHMARKS)
+    # The registry exposes exactly the delegating built-ins plus the dedicated
+    # first-class adapters (livecodebench_v6, #13) — nothing more.
+    assert set(available_adapters()) == set(SUPPORTED_BENCHMARKS) | {"livecodebench_v6"}
 
 
 def test_lookup_is_case_insensitive():
@@ -220,4 +221,4 @@ def test_decorator_registration_and_registry_isolation():
         clear_registry()
         register_builtin_adapters()
 
-    assert set(available_adapters()) == set(SUPPORTED_BENCHMARKS)
+    assert set(available_adapters()) == set(SUPPORTED_BENCHMARKS) | {"livecodebench_v6"}
