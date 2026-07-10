@@ -119,24 +119,73 @@ def _committed_answer(benchmark: str, traj: Trajectory) -> str:
     """Pick the text to score from a multi-turn trajectory.
 
     ``_final_answer`` (last Worker output) is often a verbose derivation with no
-    cleanly-extractable answer, while an answer DID appear in some turn. To avoid
-    throwing away answers the system actually produced, score the MOST RECENT turn
-    whose output yields an extractable answer for this task type; fall back to
-    ``final_answer``. This applies equally to TRINITY and the random baseline (the
-    single-model baseline is one turn, so it is unaffected) — a fair fix, not a thumb
-    on the scale. See JOURNAL 2026-06-23 (MMLU extraction diagnosis).
+    cleanly-extractable answer, while an answer DID appear in an earlier turn. To
+    avoid throwing away answers the system actually produced, score the most
+    recent turn whose output yields an extractable answer for this task type;
+    fall back to ``final_answer``. This applies equally to TRINITY and the random
+    baseline (the single-model baseline is one turn, so it is unaffected) — a fair
+    fix, not a thumb on the scale. See JOURNAL 2026-06-23 (MMLU extraction).
+
+    Verifier turns are never eligible. A Verifier-ACCEPT run terminates *on* a
+    Verifier turn (see :func:`~trinity.orchestration.session.run_trajectory`), and
+    post-processing is pass-through (:mod:`trinity.roles.postprocess`), so the
+    Verifier's ``processed_output`` keeps its full critique — which routinely
+    mentions a choice letter or number it is only *discussing* ("the worker points
+    at B ... VERDICT: ACCEPT"). Scoring that text would credit or penalise the run
+    for the *checker's* words rather than an answer the solver committed. The
+    scored answer is the last non-verifier ``O_k``, matching
+    :func:`~trinity.orchestration.session._final_answer` and the
+    :func:`_terminating_role` contract. Prefer the most recent Worker turn, then
+    any other non-verifier turn.
     """
     key = (benchmark or "").strip().lower()
     final = traj.final_answer or ""
-    turns = getattr(traj, "turns", None) or []
-
     if has_answer(key, final):
         return final
-    for tr in reversed(turns):
-        txt = getattr(tr, "processed_output", "") or ""
-        if has_answer(key, txt):
-            return txt
+
+    turns = getattr(traj, "turns", None) or []
+    # Worker turns are the answer-producing role; prefer them, then fall back to
+    # any other non-verifier turn (e.g. a Thinker that stated the result).
+    worker = _last_answerful_output(key, turns, role=Role.WORKER)
+    if worker is not None:
+        return worker
+    other = _last_answerful_output(key, turns, role=None)
+    if other is not None:
+        return other
     return final
+
+
+def _last_answerful_output(
+    benchmark: str, turns: Sequence, *, role: Role | None
+) -> str | None:
+    """Return the newest turn output that carries an extractable answer.
+
+    Scans ``turns`` newest-first and returns the first ``processed_output`` that
+    :func:`has_answer` accepts for ``benchmark``.
+    :attr:`~trinity.types.Role.VERIFIER` turns are always skipped — the Verifier
+    checks the solution, it never sources the committed answer. When ``role`` is
+    given only turns of that role are considered; when ``role`` is ``None`` every
+    non-verifier turn is eligible.
+
+    Args:
+        benchmark: Benchmark identifier (case-insensitive), already lower-cased.
+        turns: The trajectory's turns, oldest-first.
+        role: Restrict to this role, or ``None`` for any non-verifier role.
+
+    Returns:
+        The matching ``processed_output``, or ``None`` when no eligible turn
+        carries an extractable answer.
+    """
+    for tr in reversed(turns):
+        tr_role = getattr(tr, "role", None)
+        if tr_role == Role.VERIFIER:
+            continue
+        if role is not None and tr_role != role:
+            continue
+        txt = getattr(tr, "processed_output", "") or ""
+        if has_answer(benchmark, txt):
+            return txt
+    return None
 
 
 def has_answer(benchmark: str, text: str) -> bool:
