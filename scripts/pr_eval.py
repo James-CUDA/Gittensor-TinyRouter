@@ -413,6 +413,7 @@ def _evaluate_cached(head, encoder, items: List[dict], pool_model_names: List[st
     import torch
     from trinity.adapters.hidden_item import from_protocol_item
     from trinity.orchestration.reward import score_text
+    from trinity.orchestration.session import routing_transcript
 
     if not items:
         return 0.0
@@ -420,7 +421,7 @@ def _evaluate_cached(head, encoder, items: List[dict], pool_model_names: List[st
     correct = 0
     for item in items:
         canonical = from_protocol_item(item)
-        h_np = encoder.encode(canonical["prompt"])
+        h_np = encoder.encode(routing_transcript(canonical["prompt"]))
         h_t = torch.as_tensor(np.asarray(h_np, dtype=np.float32), device=head.weight.device)
         agent_idx, _role, _dbg = head.select(h_t, sample=False)
         model_name = pool_model_names[agent_idx % len(pool_model_names)]
@@ -532,6 +533,7 @@ def _compute_novelty(head, encoder, eval_items: List[dict],
     import torch
     from trinity.adapters.hidden_item import from_protocol_item
     from trinity.coordinator.head import LinearHead
+    from trinity.orchestration.session import routing_transcript
 
     try:
         king_hw = np.load(str(hw_path))
@@ -546,7 +548,7 @@ def _compute_novelty(head, encoder, eval_items: List[dict],
     matches = 0
     for item in eval_items[:ref_count]:
         canonical = from_protocol_item(item)
-        h_np = encoder.encode(canonical["prompt"])
+        h_np = encoder.encode(routing_transcript(canonical["prompt"]))
         h_t = torch.as_tensor(np.asarray(h_np, dtype=np.float32), device=head.weight.device)
 
         sub_agent, sub_role, _ = head.select(h_t, sample=False)
