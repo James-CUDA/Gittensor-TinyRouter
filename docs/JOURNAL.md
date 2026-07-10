@@ -41,6 +41,24 @@ append helpers. Route `openrouter_client`, `cost_report.py`, and
 **Follow-up:** the append helper writes text-only handles; keeping the test hook
 typed as `TextIO` avoids implying binary support the implementation does not have.
 
+## 2026-07-10 — Rate-limit gate counted wins, not attempts  #mistake #finding #decision
+
+**Context:** follow-up from the UTC timestamp fix on Gate 1 (`_check_rate_limit`).
+`SUBMITTING.md` says "1 submission per benchmark per week".
+**Expected:** any evaluated submission consumes the weekly slot, win or lose.
+**Actual:** `_update_leaderboard` (the only writer into `history`) ran only on
+`score > best_score`. Score-rejections and later gate failures never touched the
+log, so Gate 1 only saw prior *wins*. A miner could lose, immediately resubmit,
+and probe the hidden benchmark without waiting 7 days.
+**Root cause:** rate limit reused the win-only `history` log instead of an
+attempt log.
+**Fix / decision:** record an `attempts` entry as soon as Gate 1 passes (slot
+consumed even if Gate 2+ fails or the score loses). Gate 1 reads `attempts`,
+falling back to legacy `history` when `attempts` is absent. First write seeds
+`attempts` from existing `history` so recent winners stay rate-limited after
+rollout. Covered by `tests/test_pr_eval_rate_limit.py`.
+**Follow-up:** none for this hole.
+
 ---
 
 ## 2026-07-10 — Passing a price table silently made the Conductor free  #mistake #gotcha
@@ -213,10 +231,8 @@ of UTC evade the rate limit (their prior submission reads as older than it is).
 timezone-independent. Covered by `tests/test_pr_eval_rate_limit.py` (asserts the
 true UTC epoch via `datetime(..., tzinfo=utc)`, and — where `time.tzset` exists —
 re-checks under forced non-UTC zones).
-**Follow-up:** none for this bug. Separately noted while reading the gate: only
-*approved* submissions are appended to `history`, so the rate limit currently
-counts prior *wins*, not prior *attempts* — a larger design question left for its
-own change.
+**Follow-up:** none for this bug. (Superseded 2026-07-10: rate limit now
+counts attempts via the `attempts` log, not only approved wins.)
 
 ---
 
