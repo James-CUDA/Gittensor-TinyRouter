@@ -101,7 +101,7 @@ class CoordinatorEncoder:
             torch_dtype=self._dtype,
             output_hidden_states=True,
         )
-        self.model.to(device)
+        self.model.to(torch.device(device))
         self.model.eval()
         # The orthogonal SVD factors and head are not trained via autograd
         # (sep-CMA-ES is derivative-free); disable grads on the whole SLM.
