@@ -18,6 +18,29 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-07-10 — Verifier verdicts missed when the model wraps them in Markdown  #mistake #finding #decision
+
+**Context:** `roles/verifier.py::parse_verdict` extracts `VERDICT: ACCEPT|REVISE`
+from the Verifier turn; an ACCEPT terminates the trajectory early (SPEC §0.3.5).
+The regex was recently anchored with a trailing `\b` (good — stops `ACCEPTABLE`).
+**Expected:** a verdict still parses when the model emphasises it.
+**Actual:** it did not. Models routinely format the line as `**VERDICT:** ACCEPT`,
+`VERDICT: **ACCEPT**`, or ``VERDICT: `REVISE` ``, and `VERDICT:\s*(ACCEPT|REVISE)`
+requires the colon then only whitespace before the word — so all three returned
+`None`, the loop fail-safed to REVISE, and a correct+complete answer never earned
+the early ACCEPT. That needlessly runs the full turn budget, hurting the
+efficiency term (10% of the competition score) and raising live-eval latency/cost.
+**Root cause:** the separator between `VERDICT` and the verdict word only allowed
+whitespace, not Markdown emphasis / code / dash markers.
+**Fix / decision:** broaden the separator to `[\s:*_`~-]*` and replace the trailing
+`\b` with `(?![A-Za-z])`. The lookahead is needed because `\b` treats an underscore
+as a word char and would reject the italic wrapper `__REVISE__`; the lookahead
+blocks only a trailing *letter*, so the `ACCEPTABLE`/`ACCEPTED`/`REVISED` guard is
+preserved while `**`/`__`/`` ` ``/punctuation are fine. The character class matches
+no letters, so prose ("the verdict is … accept") is still rejected. Covered by new
+cases in `tests/test_verifier.py`.
+**Follow-up:** none.
+
 ## 2026-07-10 — Passing a price table silently made the Conductor free  #mistake #gotcha
 **Context:** checking the pre-launch projections in `fugu/cost.py` before trusting them to size a paid GRPO run. The module's stated job is to stop us launching a paid job blind.
 **Expected:** `conductor_local=False` + `conductor_model="minimax-m3"` prices the Conductor's generation, whichever way the worker prices were supplied.
