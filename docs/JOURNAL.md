@@ -40,6 +40,25 @@ wrong answers stay wrong (no false positives). Covered by
 **Follow-up:** none. (`1\,000` — the `\,` thin-space form — is already handled in
 `normalize_math_answer`'s token strip.)
 
+## 2026-07-10 — `main` went red: cache-prompt test not updated for the `_cache_answers` refactor  #mistake #gotcha
+
+**Context:** two changes landed close together — the cache-prompt fix (which added
+`tests/test_build_benchmark_cache_prompt.py`, asserting `_cache_answers` uses a
+WORKER turn) and the #62 refactor that routes caching through the adapter registry.
+**Expected:** green `main`.
+**Actual:** `pytest` fails 2/2 in `test_build_benchmark_cache_prompt.py`. #62 changed
+`_cache_answers(items, ...)` to `_cache_answers(task_item_pairs, ...)` — it now takes
+`(task, item)` pairs and renders the prompt via `get_adapter(task.benchmark)
+.build_prompt(task)` — but the test still called the old `(items, ...)` signature.
+**Root cause:** the test encoded the *old* call shape; the refactor updated the
+function and its caller but not this test, and with no CI gate the break merged.
+**Fix / decision:** update the test to the `(task, item)` pair API and assert the
+prompt equals `build_messages(Role.WORKER, adapter.build_prompt(task), [])` (still
+pinning the WORKER-turn behaviour, now through the adapter). The `_cache_answers`
+WORKER-turn fix itself is intact after #62; only the test was stale. Full suite
+green again.
+**Follow-up:** the offline PR CI in #52 would have caught this; worth landing.
+
 ## 2026-07-10 — Duplicate-detection gate (Gate 3) defeated by re-rolling SVF scales  #mistake #finding #decision
 
 **Context:** auditing the anti-cheat gates in `scripts/pr_eval.py`. Gate 3
@@ -79,6 +98,21 @@ seed=1: identical first population? True
 **Root cause:** pycma special-cases the value. `cma.CMAOptions.defaults()["seed"]` documents itself as *"random number seed for `numpy.random`; `None` and `0` equate to `time`, `np.nan` means 'do nothing'"*. So `opts["seed"] = 0` means **seed from the clock**. And `0` was the default at every level: `SepCMAES(seed=0)`, `run(seed=0)`, `trinity.train --seed default=0`, and the class's own usage example on line 72. What hid it is that the *other* consumers of `args.seed` really are deterministic — `load_tasks(seed=...)` and `gen_rng = random.Random(seed*100000 + gen)` — so a re-run draws the same tasks in the same order and only the CMA-ES trajectory silently diverges. It looks reproducible until the fitness curve differs.
 **Fix / decision:** stop forwarding the seed to pycma. Pass `np.nan` (pycma's documented "do nothing") and call `np.random.seed(self.seed)` ourselves, since numpy treats `0` as an ordinary seed. This is behavior-preserving: pycma implements an honoured `seed=k` as exactly `np.random.seed(k)`, verified by a test that reconstructs the reference stream directly from `cma.CMAEvolutionStrategy` — so every previously-working seed keeps its byte-identical stream and archived fitness curves stay reproducible. `0` simply joins them. Rejected the tempting one-liner `seed or 1`, which would silently alias seeds 0 and 1 onto one stream (pinned by `test_zero_and_one_are_not_aliased`). Seeds outside `[0, 2**32-1]` now raise instead of reaching numpy.
 **Follow-up:** the wrapper still seeds the **global** `numpy.random` state — that is unchanged from before (pycma did it too), but it means constructing a `SepCMAES` perturbs unrelated numpy randomness in the process. Isolating it behind a `np.random.Generator` / pycma's `randn` option is worth doing separately. Also relevant to the receipt gate in `pr_eval.py`: a "plausible CMA-ES fitness curve" is only re-derivable now that the default seed is honoured.
+
+## 2026-07-10 — MMLU `train` split resolved via shared split_policy  #finding #decision
+
+**Context:** `load_tasks("mmlu", "train")` silently fell back to the 2-item toy set
+because `cais/mmlu` publishes `auxiliary_train`, not `train` (issue #35).
+**Expected:** training and benchmark builds load real MMLU rows for logical `train`.
+**Actual:** `_try_load_hf` swallowed the unknown-split error; `load_split` substituted
+the toy set with no warning.
+**Root cause:** split name forwarded verbatim; no alias table on the built-in loader path
+(MMLU-Pro already fixed this in `split_policy.py` for its adapter).
+**Fix / decision:** extend `split_policy._SPLIT_ALIASES` with `mmlu: train →
+auxiliary_train`, resolve in `loaders.load_split`, and emit `ToyFallbackWarning` when
+the toy set stands in. Keeps one split-resolution module for all benchmarks.
+**Follow-up:** GPQA still has only an upstream `train` split; deterministic holdout for
+logical `test` is separate work.
 
 ## 2026-07-10 — Hidden-benchmark cached answers used a bare prompt, not the WORKER turn  #mistake #finding #decision
 
