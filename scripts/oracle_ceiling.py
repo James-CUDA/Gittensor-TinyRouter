@@ -57,12 +57,14 @@ class CeilingStats:
     n_models: int
     k: int
     per_model: list[float]                 # mean_q p_hat[q, m], one per model
-    best_single: float                     # max_m per_model
+    best_single: float                     # max_m per_model (full-K; per-model reporting)
     best_single_model: int                 # argmax
+    best_single_crossfit: float            # best_single on the held-out half — same estimation
+                                           # regime as routing_oracle, which is floored at it
     routing_oracle: float                  # winner's-curse-debiased (cross-fit) when K>=2
     routing_oracle_naive: float            # mean_q max_m p_hat[q, m] (upward-biased)
     clairvoyant_any: float                 # mean_q (1 - prod_m (1 - p_hat)) — NOT achievable
-    routing_headroom: float                # routing_oracle - best_single
+    routing_headroom: float                # routing_oracle - best_single_crossfit
     unroutable_noise: float                # clairvoyant_any - routing_oracle
     disagreement_rate: float               # fraction of q where models don't all agree
     routing_oracle_thresh: float           # hard p>=0.5 oracle (threshold sensitivity)
@@ -248,6 +250,7 @@ def compute_stats(S: np.ndarray, *, crossfit_splits: int = 200, seed: int = 0) -
         per_model=[float(x) for x in per_model],
         best_single=bs,
         best_single_model=bs_m,
+        best_single_crossfit=bs_cf,
         routing_oracle=oracle,
         routing_oracle_naive=oracle_naive,
         clairvoyant_any=clair,
@@ -375,11 +378,25 @@ def router_gap_closed(trinity_acc: float, best_single_acc: float,
     """(trinity - best_single) / (routing_oracle - best_single).
 
     Fraction of the REAL (achievable) headroom the trained router captures. Returns
-    NaN when the denominator is ~0 (no achievable headroom -> the ratio is undefined,
+    NaN when the denominator is <= 0 (no achievable headroom -> the ratio is undefined,
     not zero), so callers must guard on the headroom CI before trusting it.
+
+    ``best_single_acc`` must come from the SAME estimation regime as
+    ``routing_oracle_acc`` (i.e. the cross-fit ``best_single_crossfit``, which the
+    oracle is floored at). Mixing the full-K best_single with the cross-fit oracle can
+    make the denominator negative, and a negative denominator silently flips the sign:
+    a router BELOW the baseline would report a large positive capture.
+
+    Args:
+        trinity_acc: The trained router's accuracy.
+        best_single_acc: Cross-fit best-single accuracy (the routing baseline).
+        routing_oracle_acc: Cross-fit routing-oracle accuracy (the achievable ceiling).
+
+    Returns:
+        The captured fraction, or NaN when there is no achievable headroom.
     """
     denom = routing_oracle_acc - best_single_acc
-    if abs(denom) < 1e-9:
+    if denom <= 1e-9:
         return float("nan")
     return float((trinity_acc - best_single_acc) / denom)
 
@@ -444,6 +461,7 @@ def analyze_matrix(
         "point_estimates": {
             "best_single": stats.best_single,
             "best_single_model": models[stats.best_single_model] if models else None,
+            "best_single_crossfit": stats.best_single_crossfit,
             "routing_oracle": stats.routing_oracle,
             "routing_oracle_naive_biased": stats.routing_oracle_naive,
             "winners_curse_bias": stats.routing_oracle_naive - stats.routing_oracle,
@@ -473,7 +491,10 @@ def analyze_matrix(
         best_correct = (p[:, best_m] >= 0.5).astype(int)
         tri = np.array([int(trinity_per_query.get(q, 0)) for q in qids])
         trinity_acc = float(tri.mean())
-        gap = router_gap_closed(trinity_acc, stats.best_single, stats.routing_oracle)
+        # Use the cross-fit best_single: it is the baseline `routing_headroom` is measured
+        # from and the floor `routing_oracle` is clamped to, so the ratio stays a fraction
+        # of that same headroom (and its denominator can never go negative).
+        gap = router_gap_closed(trinity_acc, stats.best_single_crossfit, stats.routing_oracle)
         report["trinity"] = {
             "accuracy": trinity_acc,
             "router_gap_closed": gap,
