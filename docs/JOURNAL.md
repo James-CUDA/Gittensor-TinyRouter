@@ -32,7 +32,28 @@ assumptions.conductor_local (passed table): False
 **Why it mattered:** the prompted-Conductor baseline is exactly the `conductor_local=False` configuration, and it makes one Conductor call per rollout. At the module's own defaults (200 iterations × 4 questions × group size 64 = 51,200 rollouts) the estimate dropped an entire cost component. An under-stating projection is worse than none: this JOURNAL already records runs killed mid-flight on cost ($0.50, $1.59, ~$22 ledgered).
 **Follow-up:** `run_cost` (the *exact*, post-hoc accounting) also takes `prices` and defaults to `price_table()` with a local Conductor. That is correct for its purpose — it prices observed per-model token totals and never looks up `CONDUCTOR_KEY` — but the two functions' `prices` parameters now mean subtly different things, which is worth a docstring note if a third caller appears.
 
----
+## 2026-07-10 — Math grader false-negatives on LaTeX-grouped thousands (`1{,}000`)  #mistake #finding #decision
+
+**Context:** the math grader (`orchestration/reward.py`) already strips *bare*
+digit-grouping commas (`1,000` -> `1000`). Checking whether MATH-500's other common
+thousands form is handled.
+**Expected:** `\boxed{2{,}048}` grades equal to `2048`.
+**Actual:** it graded **wrong** (score 0.0). MATH-500 frequently writes thousands
+with LaTeX's `{,}` group (which renders as a comma): `\boxed{1{,}000}`,
+`\boxed{2{,}048}`, `\boxed{1{,}234{,}567}`. The braces defeat both halves of the
+grader — `extract_last_number` split `1{,}000` into `1` and `000` (returning
+`000`), and `normalize_math_answer`'s comma-strip only matched a bare comma, so the
+braced form survived and never equalled the plain reference.
+**Root cause:** `{,}` was never normalised to a bare comma, so neither the
+thousands-separator regex nor the comma-strip saw it.
+**Fix / decision:** replace `{,}` -> `,` early in both `extract_last_number` and
+`normalize_math_answer`, so the existing (already-tested) comma handling removes it.
+Additive to the bare-comma logic; a comma-separated *list* (`1,2,3`) and genuinely
+wrong answers stay wrong (no false positives). Covered by
+`tests/test_reward_latex_thousands.py`.
+**Follow-up:** none. (`1\,000` — the `\,` thin-space form — is already handled in
+`normalize_math_answer`'s token strip.)
+
 ## 2026-07-10 — `main` went red: cache-prompt test not updated for the `_cache_answers` refactor  #mistake #gotcha
 
 **Context:** two changes landed close together — the cache-prompt fix (which added
