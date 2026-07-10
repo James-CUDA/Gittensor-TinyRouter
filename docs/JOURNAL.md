@@ -30,6 +30,32 @@ That error names neither the toy fallback nor the split that failed to load. Som
 **Root cause:** the loaders correctly *report* the substitution, but the only consumer for whom toy data is categorically unacceptable — the sealed, integrity-hashed hidden benchmark — never listened. `select_splits`' size check caught it by accident, one stage too late, because 2 < 220. A benchmark whose toy set happened to exceed the protocol's counts would have been sealed and hashed as real data with nothing but a warning on stderr.
 **Fix / decision:** escalate `ToyFallbackWarning` to an error inside `_sample_pool` (`warnings.simplefilter("error", ToyFallbackWarning)`), and re-raise it as a `RuntimeError` that names the benchmark, quotes the original warning, and states the remedy. The original warning is preserved as `__cause__` rather than swallowed. Chose this over threading an `allow_toy_fallback=False` flag up through `BenchmarkAdapter.load_tasks`: escalating the warning reuses the signal #73 already added, changes no interface, and cannot be forgotten by the next adapter — any loader that warns is covered for free.
 **Follow-up:** `trinity.train` has the same exposure — training on 2 toy questions produces a normal-looking receipt — but it goes through `load_tasks` rather than `_sample_pool`, so it needs its own decision about whether an offline smoke run should stay permitted. Deliberately out of scope here.
+## 2026-07-10 — Cost-ledger append reset to genesis after any chain break  #mistake #decision
+**Context:** follow-up audit of the unified cost-ledger module from #87/#88.
+Concurrent OpenRouter chats (`max_concurrency` default 8) append to the same
+JSONL with no lock; a tip race can leave one sibling line whose hash does not
+link.
+**Expected:** after a break, later appends still link to the **last line's**
+`h` (pre-#88 writer behaviour), so the tip keeps advancing and only the broken
+prefix fails verification.
+**Actual:** `append_ledger_entry` continued only when `verify_ledger_chain_text`
+returned valid. On any failure it set `prev_hash=""`, so every later write was
+a new genesis. `cost_report.py --ledger` kept failing; `pack_submission.py`
+silently reported `$0` once `valid` was false. The in-memory `file_handle=`
+hook also always read tip from disk (or `""`), so multi-append via `StringIO`
+could not build a chain either.
+**Root cause:** the #87/#88 unification correctly shared payload encoding, but
+the continue policy was tightened to "link only if whole file verifies" —
+stricter than the old writer and permanently worse under concurrency.
+**Fix / decision:** always take `prev_hash` from the last non-empty line
+(`tip_hash_from_text`); derive tip from the handle when `file_handle` is set;
+wrap disk read-tip+append in a sidecar exclusive lock so concurrent writers
+share one tip. Verification stays strict for reporting. Covered by
+`tests/test_cost_ledger.py` (broken-prefix append + `StringIO` chain).
+**Follow-up:** none for the genesis-reset hole. A broken prefix still fails
+full-chain verify (by design); operators can truncate to the last good prefix
+if they need a clean receipt.
+
 ## 2026-07-10 — pack_submission priced ledger with flat blended rate, not in/out split  #mistake #finding #decision
 **Context:** wiring training receipts (`scripts/pack_submission.py`) to the verified
 cost ledger after #87 landed `trinity.llm.cost_ledger`.
