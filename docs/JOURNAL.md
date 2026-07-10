@@ -30,6 +30,24 @@ That error names neither the toy fallback nor the split that failed to load. Som
 **Root cause:** the loaders correctly *report* the substitution, but the only consumer for whom toy data is categorically unacceptable — the sealed, integrity-hashed hidden benchmark — never listened. `select_splits`' size check caught it by accident, one stage too late, because 2 < 220. A benchmark whose toy set happened to exceed the protocol's counts would have been sealed and hashed as real data with nothing but a warning on stderr.
 **Fix / decision:** escalate `ToyFallbackWarning` to an error inside `_sample_pool` (`warnings.simplefilter("error", ToyFallbackWarning)`), and re-raise it as a `RuntimeError` that names the benchmark, quotes the original warning, and states the remedy. The original warning is preserved as `__cause__` rather than swallowed. Chose this over threading an `allow_toy_fallback=False` flag up through `BenchmarkAdapter.load_tasks`: escalating the warning reuses the signal #73 already added, changes no interface, and cannot be forgotten by the next adapter — any loader that warns is covered for free.
 **Follow-up:** `trinity.train` has the same exposure — training on 2 toy questions produces a normal-looking receipt — but it goes through `load_tasks` rather than `_sample_pool`, so it needs its own decision about whether an offline smoke run should stay permitted. Deliberately out of scope here.
+## 2026-07-10 — A null `usage` block crashed a successful inference call  #mistake #gotcha
+**Context:** hardening `llm/openrouter_client.py` after #72 fixed the `content: null` case, to see whether the same present-but-null trap existed elsewhere in the response parsing.
+**Expected:** a 200-OK response with `"usage": null` records zero tokens and returns the completion.
+**Actual:** `usage = data.get("usage", {})` returns `None` (the `{}` default only applies to an *absent* key, not a present-null one), and the next line `usage.get("prompt_tokens", 0)` raises `AttributeError: 'NoneType' object has no attribute 'get'` — on an otherwise-successful call.
+**Root cause:** the identical `dict.get(k, default)` misuse #72 fixed for `content`, one function away, in the token-accounting path — missed because `_message_text` and the usage parse were treated as separate concerns. OpenAI-compatible providers send `"usage": null` for some backends and for 200s with an empty completion.
+**Why it is worse than the `content` case:** `_message_text` returned a wrong *value* ("None"); this *raises*. The `AttributeError` is not in the `_Retryable` set (only 429/5xx and network errors are), and `@retry(..., reraise=True)` re-raises it out of `chat`. With `eval`/`fitness` now gathering `return_exceptions=True`, that exception becomes the trajectory's result and is scored **0.0** — so a model that answered correctly is silently counted as wrong, in both eval and CMA-ES training reward.
+**Fix / decision:** `usage = data.get("usage") or {}` — covers absent and null identically, exactly mirroring the `if content is None` guard #72 added in the same file. One line; no behaviour change for a populated, empty, or absent usage block.
+**Follow-up:** `choice = data["choices"][0]` and `choice["message"]` are still index/`[]` access, so a response with no `choices` would `KeyError`. That is a genuinely malformed response (not a documented provider behaviour like `usage: null`), so I left it — a separate, weaker concern.
+
+## 2026-07-10 — Added an offline view of efficiency and composite-score tradeoffs  #finding #decision
+**Context:** contributors could see hidden/live accuracy, but the competition's 10% efficiency term still lived only inside `scripts/pr_eval.py::_compute_score`, making turn-efficiency tradeoffs hard to inspect offline.
+**Expected:** a miner can estimate the composite score and inspect turns-per-correct-answer without opening a PR or touching the hidden evaluator.
+**Actual:** there was no repo-local utility for that analysis; the formula existed only in the maintainer scorer.
+**Fix / decision:** add `src/trinity/efficiency.py` plus `scripts/efficiency_report.py` as an offline mirror of the current score formula, with per-answer efficiency summaries (`turns_per_correct`, optional calls/cost per correct) and tests that pin the implementation to `pr_eval` when importable.
+**Follow-up:** if the competition scoring formula changes, `pr_eval` and `trinity.efficiency` must be updated together so offline analysis stays aligned with the maintained scorer.
+
+---
+
 ## 2026-07-10 — The head never read `<Head Input>`; the EOS trick was a no-op  #mistake #gotcha #repro
 **Context:** verifying that `coordinator/slm.py::encode` matches the canonical extraction in SPEC §3.2 before trusting any head trained on it.
 **Expected:** `encode` tokenizes `transcript + "\n<Head Input>"`, appends one EOS, and reads index `-2` — the suffix's final token, a fixed decision position.
