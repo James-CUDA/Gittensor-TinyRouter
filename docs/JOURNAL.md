@@ -18,20 +18,57 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
-## 2026-07-10 — MMLU training ran on 2 toy items: `cais/mmlu` has no `train` split  #mistake #gotcha #repro
-**Context:** auditing the benchmark loading path after the adapter seam landed (#20) and the per-benchmark loaders moved out of `orchestration/dataset.py` into `adapters/loaders.py` (#10). The bug survived that refactor untouched — it moved, it did not go away.
-**Expected:** `load_tasks("mmlu", "train")` returns MMLU training rows whenever `datasets` + network are available.
-**Actual:** it returns the 2-item built-in toy set — silently, even on a fully online box. `python -m trinity.train --benchmark mmlu` therefore optimized CMA-ES fitness over **two toy questions** and still wrote a normal-looking receipt. Reproduced offline with a fake `datasets` module mimicking the real upstream split set:
+## 2026-07-10 — The hidden-benchmark build accepted toy data, then died pointing elsewhere  #mistake #gotcha #repro
+**Context:** #73 fixed MMLU's `train` split and wired `ToyFallbackWarning` into `load_split`. Checking what the *hidden-benchmark builder* does when that warning fires.
+**Expected:** `build_benchmark.py` refuses to seal a benchmark whose questions came from the 2-item offline toy set.
+**Actual:** it accepts them. `protocol.sample_pool` draws from the `"train"` split, so with `datasets` unavailable (offline box, or the gated `Idavidrein/gpqa`) the pool is the toy set. A warning is emitted — and warnings do not stop anything. The build then dies much later, in `select_splits`:
 ```
-load_tasks('mmlu', 'train') -> n=2  TOY   ['mmlu-toy-0', 'mmlu-toy-1']
-load_tasks('mmlu', 'test' ) -> n=5  real  ['mmlu-2', 'mmlu-1', ...]
+_sample_pool('mmlu')  -> 2 tasks  (ToyFallbackWarning emitted)
+select_splits         -> ValueError: pool has 2 tasks but the protocol needs 220 (eval=150, audit=50, live=20)
 ```
-**Root cause:** two independently-reasonable behaviours composing into a silent failure. (1) `cais/mmlu` (config `all`) exposes `{test, validation, dev, auxiliary_train}` — there is no `train` split — but `_load_mmlu_hf` forwarded the logical split verbatim, so `load_dataset` raised. (2) `_try_load_hf` swallows *every* exception by design (so the offline dev box works), and `load_split` treats `None` as "offline" and substitutes the toy set. A wrong split name was thus indistinguishable from intentional offline dev. Only the train side was affected, because `test` happens to exist upstream — which is exactly why it went unnoticed.
-**Fix / decision:** resolve logical splits to dataset-native names through a `_SPLIT_ALIASES` table (`mmlu: train -> auxiliary_train`) in `adapters/loaders.py`, mirroring the mapping `_lcb_version_for_split` already does for LiveCodeBench. Independently, make the fallback *loud*: `load_split` — the single canonical raw-or-toy path every adapter and the `dataset.load_tasks` shim share — now emits `ToyFallbackWarning` naming the benchmark and split whenever the toy set stands in for real data, and takes `allow_toy_fallback=False` to raise instead. The toy set keeps working for smoke tests; it just can no longer impersonate real data.
-**Second victim (found while rebasing):** the sealed sampling protocol from #14 calls `load_tasks(benchmark, "train", ...)` inside `protocol.sample_pool`. On MMLU that returned the 2-item toy set, so `select_splits` aborted with `pool has 2 tasks but the protocol needs 220 (eval=150, audit=50, live=20)` — an error naming neither MMLU's split nor the toy fallback. **Building the MMLU hidden benchmark was impossible**, and the message pointed nowhere near the cause. The protocol's own size guard is what turned a silent corruption into a loud-but-misleading crash; without it, 2 toy questions would have been sealed and hashed as the hidden benchmark. Pinned by `test_sealed_protocol_can_build_an_mmlu_pool`.
-**Follow-up:** `gpqa` is gated on HF (`Idavidrein/gpqa`) and only publishes a `train` split, so loading its `test` split still falls back — now *with a warning* rather than silently. Deciding whether to deterministically partition that single split into train/test is left as separate work, as is threading `allow_toy_fallback=False` up through the `BenchmarkAdapter.load_tasks` contract into `train.py` and `scripts/build_benchmark.py`, which should never accept toy data. See #14 (freeze the sampling protocol) — that work needs split names that resolve at all, which is what this entry fixes.
+That error names neither the toy fallback nor the split that failed to load. Someone reading it would go hunting in `benchmark_protocol.py`, which is entirely innocent.
+**Root cause:** the loaders correctly *report* the substitution, but the only consumer for whom toy data is categorically unacceptable — the sealed, integrity-hashed hidden benchmark — never listened. `select_splits`' size check caught it by accident, one stage too late, because 2 < 220. A benchmark whose toy set happened to exceed the protocol's counts would have been sealed and hashed as real data with nothing but a warning on stderr.
+**Fix / decision:** escalate `ToyFallbackWarning` to an error inside `_sample_pool` (`warnings.simplefilter("error", ToyFallbackWarning)`), and re-raise it as a `RuntimeError` that names the benchmark, quotes the original warning, and states the remedy. The original warning is preserved as `__cause__` rather than swallowed. Chose this over threading an `allow_toy_fallback=False` flag up through `BenchmarkAdapter.load_tasks`: escalating the warning reuses the signal #73 already added, changes no interface, and cannot be forgotten by the next adapter — any loader that warns is covered for free.
+**Follow-up:** `trinity.train` has the same exposure — training on 2 toy questions produces a normal-looking receipt — but it goes through `load_tasks` rather than `_sample_pool`, so it needs its own decision about whether an offline smoke run should stay permitted. Deliberately out of scope here.
 
 ---
+
+## 2026-07-10 — Passing a price table silently made the Conductor free  #mistake #gotcha
+**Context:** checking the pre-launch projections in `fugu/cost.py` before trusting them to size a paid GRPO run. The module's stated job is to stop us launching a paid job blind.
+**Expected:** `conductor_local=False` + `conductor_model="minimax-m3"` prices the Conductor's generation, whichever way the worker prices were supplied.
+**Actual:** passing `prices=` billed the Conductor **$0**, while the returned `assumptions` still said `conductor_local: False` — an internally self-contradictory estimate.
+```
+prices=None (default table)   conductor_api_usd = 1.5
+prices=dict(PRICES) passed    conductor_api_usd = 0.0     # same config
+assumptions.conductor_local (passed table): False
+```
+**Root cause:** `conductor_local` and `conductor_model` were consumed **only inside `price_table`**. `estimate_grpo_cost` did `table = prices if prices is not None else price_table(...)`, so an explicit table skipped that branch and both knobs were ignored. A worker price table carries no `"<conductor>"` key, so `table.get(CONDUCTOR_KEY, (0.0, 0.0))` returned zeros and the Conductor cost nothing. The rule for *when the Conductor is billed* lived in one function while the *decision to bill it* was taken in another.
+**Fix / decision:** extract that rule into `_conductor_price(lookup, conductor_model, conductor_local)` and call it from both `price_table` and the estimator. An explicit `prices` table stays authoritative for the **worker** models — no caller passes one today, so nothing depends on the old replace-everything semantics — but it no longer disables Conductor pricing: the entry is derived unless the caller supplied `CONDUCTOR_KEY` themselves, and the model's rate resolves against `PRICES` overlaid with the caller's table. The caller's dict is copied, not mutated.
+**Why it mattered:** the prompted-Conductor baseline is exactly the `conductor_local=False` configuration, and it makes one Conductor call per rollout. At the module's own defaults (200 iterations × 4 questions × group size 64 = 51,200 rollouts) the estimate dropped an entire cost component. An under-stating projection is worse than none: this JOURNAL already records runs killed mid-flight on cost ($0.50, $1.59, ~$22 ledgered).
+**Follow-up:** `run_cost` (the *exact*, post-hoc accounting) also takes `prices` and defaults to `price_table()` with a local Conductor. That is correct for its purpose — it prices observed per-model token totals and never looks up `CONDUCTOR_KEY` — but the two functions' `prices` parameters now mean subtly different things, which is worth a docstring note if a third caller appears.
+
+## 2026-07-10 — Math grader false-negatives on LaTeX-grouped thousands (`1{,}000`)  #mistake #finding #decision
+
+**Context:** the math grader (`orchestration/reward.py`) already strips *bare*
+digit-grouping commas (`1,000` -> `1000`). Checking whether MATH-500's other common
+thousands form is handled.
+**Expected:** `\boxed{2{,}048}` grades equal to `2048`.
+**Actual:** it graded **wrong** (score 0.0). MATH-500 frequently writes thousands
+with LaTeX's `{,}` group (which renders as a comma): `\boxed{1{,}000}`,
+`\boxed{2{,}048}`, `\boxed{1{,}234{,}567}`. The braces defeat both halves of the
+grader — `extract_last_number` split `1{,}000` into `1` and `000` (returning
+`000`), and `normalize_math_answer`'s comma-strip only matched a bare comma, so the
+braced form survived and never equalled the plain reference.
+**Root cause:** `{,}` was never normalised to a bare comma, so neither the
+thousands-separator regex nor the comma-strip saw it.
+**Fix / decision:** replace `{,}` -> `,` early in both `extract_last_number` and
+`normalize_math_answer`, so the existing (already-tested) comma handling removes it.
+Additive to the bare-comma logic; a comma-separated *list* (`1,2,3`) and genuinely
+wrong answers stay wrong (no false positives). Covered by
+`tests/test_reward_latex_thousands.py`.
+**Follow-up:** none. (`1\,000` — the `\,` thin-space form — is already handled in
+`normalize_math_answer`'s token strip.)
+
 ## 2026-07-10 — `main` went red: cache-prompt test not updated for the `_cache_answers` refactor  #mistake #gotcha
 
 **Context:** two changes landed close together — the cache-prompt fix (which added
@@ -50,6 +87,20 @@ pinning the WORKER-turn behaviour, now through the adapter). The `_cache_answers
 WORKER-turn fix itself is intact after #62; only the test was stale. Full suite
 green again.
 **Follow-up:** the offline PR CI in #52 would have caught this; worth landing.
+
+## 2026-07-10 — govern job 403 on fork PR label write-back  #mistake #decision
+
+**Context:** PR-bot governance (`pr-bot.yml`) from #51; every fork PR failed the
+`govern` check on `ensure_labels.py` (issue #84, part 1). Routing-template false
+positives were fixed separately in #86 (issue #85).
+**Expected:** fork PRs run deterministic analysis even when `GITHUB_TOKEN` cannot
+create labels or post comments.
+**Actual:** `ensure_labels.py` raised on HTTP 403; `run_pr_bot.py` returned exit 1
+when label write-back was rejected.
+**Fix / decision:** treat 403 on label create / PR write-back as a warning (exit 0);
+analysis output is still printed. Routing detection unchanged on `main` (#86).
+**Follow-up:** if labels must be applied to fork PRs automatically, add a minimal
+`pull_request_target` workflow that only calls the labels API.
 
 ## 2026-07-10 — Duplicate-detection gate (Gate 3) defeated by re-rolling SVF scales  #mistake #finding #decision
 
@@ -91,7 +142,6 @@ seed=1: identical first population? True
 **Fix / decision:** stop forwarding the seed to pycma. Pass `np.nan` (pycma's documented "do nothing") and call `np.random.seed(self.seed)` ourselves, since numpy treats `0` as an ordinary seed. This is behavior-preserving: pycma implements an honoured `seed=k` as exactly `np.random.seed(k)`, verified by a test that reconstructs the reference stream directly from `cma.CMAEvolutionStrategy` — so every previously-working seed keeps its byte-identical stream and archived fitness curves stay reproducible. `0` simply joins them. Rejected the tempting one-liner `seed or 1`, which would silently alias seeds 0 and 1 onto one stream (pinned by `test_zero_and_one_are_not_aliased`). Seeds outside `[0, 2**32-1]` now raise instead of reaching numpy.
 **Follow-up:** the wrapper still seeds the **global** `numpy.random` state — that is unchanged from before (pycma did it too), but it means constructing a `SepCMAES` perturbs unrelated numpy randomness in the process. Isolating it behind a `np.random.Generator` / pycma's `randn` option is worth doing separately. Also relevant to the receipt gate in `pr_eval.py`: a "plausible CMA-ES fitness curve" is only re-derivable now that the default seed is honoured.
 
----
 ## 2026-07-10 — MMLU `train` split resolved via shared split_policy  #finding #decision
 
 **Context:** `load_tasks("mmlu", "train")` silently fell back to the 2-item toy set
