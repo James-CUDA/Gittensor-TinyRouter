@@ -204,9 +204,14 @@ async def train(args) -> dict:
             print(f"    [gen {_g} cand {i + 1}/{len(thetas)}] fit={fit:.3f} ({elapsed:.0f}s)",
                   flush=True)
 
+        # Per-generation seed for the policy's train-time sampling. Same shape as
+        # gen_rng above so the whole generation is reproducible from --seed;
+        # per-task streams are derived from it inside evaluate_population, so the
+        # recorded seed now actually determines the routing draws (issue #130).
         fits = await evaluate_population(
             thetas, spec, policy, pool, pool_models, minibatch_fn,
-            sample=True, on_candidate=_on_cand, fitness_cfg=fitness_cfg, **run_kwargs
+            sample=True, on_candidate=_on_cand, fitness_cfg=fitness_cfg,
+            rng_seed=args.seed * 100000 + gen, **run_kwargs
         )
         es.tell(thetas, fits)
 

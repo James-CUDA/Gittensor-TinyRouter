@@ -35,6 +35,7 @@ Concurrency model (see docs/SPEC.md §0.3.7, §5.2):
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from dataclasses import dataclass
 from statistics import mean
 
@@ -52,6 +53,29 @@ __all__ = [
     "evaluate_candidate",
     "evaluate_population",
 ]
+
+
+def _trajectory_seed(rng_seed: int, task_id: str) -> int:
+    """Stable per-(generation, task) seed for the policy's train-time sampling.
+
+    Hashes ``f"{rng_seed}:{task_id}"`` with sha256 rather than the builtin
+    ``hash`` (which is ``PYTHONHASHSEED``-dependent -- see #36), so the seed is
+    reproducible across processes and independent of ``asyncio.gather``
+    completion order. Keyed by ``task_id`` only, NOT the candidate index: under
+    common random numbers every candidate in a generation scores the SAME
+    minibatch, so sharing the per-task stream keeps the stochastic policy's
+    draws correlated across candidates -- the variance reduction the CMA-ES
+    ranking relies on (issue #130).
+
+    Args:
+        rng_seed: Per-generation base seed threaded from ``--seed``.
+        task_id: Identifier of the task the trajectory is scoring.
+
+    Returns:
+        A non-negative 64-bit integer seed.
+    """
+    digest = hashlib.sha256(f"{rng_seed}:{task_id}".encode()).digest()
+    return int.from_bytes(digest[:8], "big")
 
 
 # ---------------------------------------------------------------------------
@@ -345,6 +369,7 @@ async def evaluate_candidate(
     return_per_task: bool = False,
     fitness_cfg: FitnessConfig | None = None,
     max_turns: int = 5,
+    rng_seed: int | None = None,
     **run_kwargs,
 ) -> tuple:
     """Configure the policy with θ and score it over ``minibatch``.
@@ -358,6 +383,13 @@ async def evaluate_candidate(
 
     ``fitness_cfg`` selects binary vs shaped per-task reward; ``None`` -> defaults
     (plain binary, original behavior).
+
+    ``rng_seed`` seeds the policy's train-time (``sample=True``) sampling: when
+    set and ``policy`` exposes ``make_rng``, each trajectory gets its own
+    generator seeded stably from ``(rng_seed, task_id)`` (see
+    :func:`_trajectory_seed`), so the routing draws are reproducible and
+    independent of ``asyncio.gather`` completion order. ``None`` keeps the old
+    behavior (draw from the process-global RNG); issue #130.
     """
     # ``None`` means "no shaping": zero the bonuses rather than taking
     # FitnessConfig()'s field defaults, which are the *configured* shaping values
@@ -377,6 +409,18 @@ async def evaluate_candidate(
             own_client = True
         except Exception:
             client = None
+    # Seed each trajectory's sampling from a stable per-(generation, task) seed so
+    # the routing draws are reproducible and independent of gather-completion order
+    # (issue #130). Built before the gather so the generator identity is fixed per
+    # task, not per resume. ``None`` (or a policy without make_rng, e.g. a test
+    # mock) falls back to the old global-RNG behavior.
+    make_rng = getattr(policy, "make_rng", None)
+
+    def _rng_for(task):
+        if rng_seed is None or make_rng is None:
+            return None
+        return make_rng(_trajectory_seed(rng_seed, task.task_id))
+
     try:
         # return_exceptions=True so one trajectory that exhausts retries (e.g. a
         # persistent timeout) degrades to reward 0 instead of crashing the whole
@@ -385,7 +429,7 @@ async def evaluate_candidate(
             *[
                 run_trajectory(
                     task, policy, pool, pool_models, sample=sample, client=client,
-                    max_turns=max_turns, **run_kwargs,
+                    max_turns=max_turns, rng=_rng_for(task), **run_kwargs,
                 )
                 for task in minibatch
             ],
@@ -441,10 +485,16 @@ async def evaluate_population(
     on_candidate=None,
     fitness_cfg: FitnessConfig | None = None,
     max_turns: int = 5,
+    rng_seed: int | None = None,
     **run_kwargs,
 ) -> list[float]:
     """Evaluate λ candidates sequentially (GPU constraint). `minibatch_fn(i)->tasks`
     yields the per-candidate minibatch (re-sampled each iteration for an unbiased J).
+
+    ``rng_seed`` (per generation) seeds the policy's train-time sampling; it is
+    forwarded to every candidate so a fixed ``--seed`` reproduces the routing
+    draws (issue #130). Keyed by task, not candidate, so all candidates in the
+    generation share the per-task stream under common random numbers.
 
     `on_candidate(i, fit, elapsed_s)` is called after each candidate for progress
     logging (with the as-evaluated per-task mean; if variance reweighting is on,
@@ -482,7 +532,7 @@ async def evaluate_population(
                 theta, spec, policy, pool, pool_models, mb,
                 sample=sample, client=client,
                 return_per_task=True, fitness_cfg=cfg, max_turns=max_turns,
-                **run_kwargs,
+                rng_seed=rng_seed, **run_kwargs,
             )
             fits.append(fit)
             per_task_rows.append(per_task)

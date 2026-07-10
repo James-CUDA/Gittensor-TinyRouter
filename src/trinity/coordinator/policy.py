@@ -83,3 +83,26 @@ class CoordinatorPolicy:
         h_t = torch.as_tensor(np.asarray(h, dtype=np.float32), device=self.head.weight.device)
         agent_idx, role, _dbg = self.head.select(h_t, sample=sample, rng=rng)
         return int(agent_idx), role
+
+    def make_rng(self, seed: int):
+        """Build a per-trajectory ``torch.Generator`` for reproducible sampling.
+
+        The generator lives on the head's device so it can seed the
+        ``torch.multinomial`` draws in :meth:`LinearHead.select` (the train-time
+        ``sample=True`` path). Callers derive ``seed`` stably per (generation,
+        task) so a fixed ``--seed`` reproduces the whole training trajectory
+        instead of drawing from the process-global RNG (issue #130).
+
+        Args:
+            seed: Integer seed for this trajectory's draws.
+
+        Returns:
+            A ``torch.Generator`` seeded with ``seed``, on the head's device.
+        """
+        import torch
+
+        # torch accepts a full uint64 seed, but mask to 63 bits so any int
+        # (e.g. a sha256-derived value) is in range across torch versions.
+        gen = torch.Generator(device=self.head.weight.device)
+        gen.manual_seed(int(seed) & ((1 << 63) - 1))
+        return gen
