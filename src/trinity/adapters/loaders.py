@@ -58,7 +58,7 @@ def _try_load_hf(
     The loaded dataset object, or ``None`` if loading was not possible.
     """
     try:
-        from datasets import load_dataset  # type: ignore[import-not-found]
+        from datasets import load_dataset
     except Exception:
         return None
     try:
@@ -449,14 +449,14 @@ def load_split(
 
     logical_split = (split or "test").strip().lower()
     resolved_split = resolve_split(key, logical_split)
-    tasks = _HF_LOADERS[key](resolved_split)
-    used_toy = not tasks
-    if used_toy:
-        tasks = _toy_tasks(key)
+    loaded = _HF_LOADERS[key](resolved_split)
+    used_toy = not loaded
+    # Narrow on ``loaded`` itself: a separate ``used_toy`` bool cannot tell the
+    # type checker that the loader did not return None.
+    tasks = list(loaded) if loaded else _toy_tasks(key)
     warn_on_toy_fallback(key, logical_split, used_toy=used_toy)
 
     rng = random.Random(seed)
-    tasks = list(tasks)
     rng.shuffle(tasks)
 
     if max_items is not None:
