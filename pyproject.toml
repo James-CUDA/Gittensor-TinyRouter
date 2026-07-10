@@ -47,3 +47,9 @@ disable_error_code = ["no-redef", "assignment", "attr-defined", "arg-type", "uni
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+markers = [
+    "slow: long-running test; runs in slow-tests.yml, not the fast PR lane",
+    "gpu: needs a GPU or heavy ML deps; excluded from offline lanes",
+    "network: needs outbound network (dataset/model downloads); excluded from offline lanes",
+    "live: hits paid/live endpoints or the hidden benchmark; never runs in CI",
+]

@@ -1,0 +1,50 @@
+name: Slow tests
+
+# Full-dependency test lane (CPU torch, transformers, datasets) across a Python
+# matrix. Complements the fast PR lane in ci.yml (which is offline and light) by
+# exercising the real ML stack and multiple Python versions.
+#
+# Kept OFF the per-PR path so ordinary PRs never wait on the heavy install.
+# Runs on demand, on pushes to main, and weekly. Still fully offline: no secrets,
+# no paid APIs, no GPU (gpu/network/live-marked tests are excluded).
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+
+permissions:
+  contents: read
+
+concurrency:
+  group: slow-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full-suite:
+    name: full suite (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies (CPU-only torch)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev]"
+
+      - name: Pytest (full deps, offline)
+        run: pytest tests/ -q -m "not gpu and not network and not live"

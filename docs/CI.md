@@ -17,6 +17,24 @@ Runs on every pull request and on pushes to `main`:
 This lane is offline and deterministic. It is the required check for normal
 contributor PRs.
 
+## Slow / full-dependency lane
+
+Workflow: `.github/workflows/slow-tests.yml`
+
+Runs on demand (`workflow_dispatch`), on pushes to `main`, and weekly — **not**
+on every PR, so ordinary contributor PRs never wait on the heavy ML install. It
+installs the full dependency set (CPU-only torch, transformers, datasets) and
+runs the suite across a Python 3.10 / 3.12 matrix. Still offline: no secrets, no
+paid APIs, no GPU.
+
+Tests are tagged with markers (registered in `pyproject.toml`) so lanes can
+select what to run:
+
+- `slow` — long-running; runs here, skipped in the fast lane
+- `gpu` — needs a GPU / heavy ML deps; excluded from offline lanes
+- `network` — needs outbound network (dataset/model downloads); excluded offline
+- `live` — hits paid/live endpoints or the hidden benchmark; never runs in CI
+
 ## Repository bots
 
 Workflows:
