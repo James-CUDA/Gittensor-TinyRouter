@@ -119,9 +119,27 @@ def _ledger_append(model: str, prompt_tokens: int, completion_tokens: int) -> No
 
 
 def _message_text(choice_message: dict) -> str:
-    """Normalize OpenRouter/OpenAI message content to plain text."""
+    """Normalize OpenRouter/OpenAI message content to plain text.
 
-    content = choice_message.get("content", "")
+    A turn with no text content is the empty string. OpenAI-compatible APIs express
+    that as ``"content": null`` (a reasoning-only turn, a completion cut at
+    ``max_tokens`` before any content token, or a tool-call-only turn), which is
+    distinct from the key being absent. ``dict.get(key, default)`` only substitutes
+    the default for an *absent* key, so ``None`` must be handled explicitly --
+    otherwise it falls through to ``str(content)`` and yields the literal ``"None"``,
+    which would then enter the transcript and the reward scorer as if the model had
+    answered with that word.
+
+    Args:
+        choice_message: The ``choices[i]["message"]`` object from the API response.
+
+    Returns:
+        The message's text, or ``""`` when the turn carried no text content.
+    """
+
+    content = choice_message.get("content")
+    if content is None:
+        return ""
     if isinstance(content, str):
         return content
     if isinstance(content, list):

@@ -18,6 +18,22 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-07-10 — A null completion entered the transcript as the word "None"  #mistake #gotcha
+**Context:** auditing `llm/openrouter_client.py` for how a degenerate API response propagates into scoring.
+**Expected:** a turn with no text content normalizes to `""`.
+**Actual:** `_message_text({"content": None})` returned the literal 4-character string `"None"`.
+```
+_message_text({"role": "assistant"})   -> ''       # key absent  — correct
+_message_text({"content": ""})         -> ''       # correct
+_message_text({"content": None})       -> 'None'   # <-- the bug
+```
+**Root cause:** `content = choice_message.get("content", "")`. `dict.get`'s default only fires when the key is **absent**, not when it is present-and-null. OpenAI-compatible APIs send `"content": null` routinely — a reasoning-only turn, a completion cut at `max_tokens` before the first content token, a tool-call-only turn. `None` then failed both `isinstance` checks and fell through to the trailing `return str(content)`.
+**Fix / decision:** handle `None` explicitly and return `""`. Keep `str(content)` as the fallback for genuinely unexpected types, so the function still degrades loudly rather than silently dropping a payload it does not understand.
+**Why it mattered more than it looks:** `_message_text` feeds `ChatResult.text`, which has two consumers. `session.py` appends it to the multi-turn transcript the coordinator encodes to choose the next `(agent, role)` — so the router was conditioning on a token sequence no model ever emitted. `eval.py` passes it to `adapter.score_output`, so a null completion was graded as if the model had answered "None". It also erased the distinction between an empty completion and a null one, which is exactly the signal you want when diagnosing truncation.
+**Follow-up:** none. The fallback for unexpected types is deliberately unchanged.
+
+---
+
 ## 2026-07-10 — The default seed (0) made every CMA-ES run irreproducible  #mistake #gotcha #repro
 **Context:** `sep_cmaes.py` opens with "Thin, **deterministic** wrapper around the `cma` library" and documents `seed` as "RNG seed for reproducible sampling". Checking that claim before relying on it for receipt reproduction.
 **Expected:** `SepCMAES(n, seed=0)` twice in a row samples the same first population.
