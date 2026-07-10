@@ -18,21 +18,134 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
-## 2026-07-10 — A null completion entered the transcript as the word "None"  #mistake #gotcha
-**Context:** auditing `llm/openrouter_client.py` for how a degenerate API response propagates into scoring.
-**Expected:** a turn with no text content normalizes to `""`.
-**Actual:** `_message_text({"content": None})` returned the literal 4-character string `"None"`.
+## 2026-07-10 — The head never read `<Head Input>`; the EOS trick was a no-op  #mistake #gotcha #repro
+**Context:** verifying that `coordinator/slm.py::encode` matches the canonical extraction in SPEC §3.2 before trusting any head trained on it.
+**Expected:** `encode` tokenizes `transcript + "\n<Head Input>"`, appends one EOS, and reads index `-2` — the suffix's final token, a fixed decision position.
+**Actual:** the suffix was never appended. The string `<Head Input>` appeared nowhere in `src/`. `encode` tokenized the bare transcript, appended EOS, and read `-2` — which is the transcript's **last content token**. Its own comment asserted the opposite: *"The last real content token therefore sits at index -2 (the `<Head Input>` position)."* Both cannot be true. Demonstrated with a char-code tokenizer and an echo model:
 ```
-_message_text({"role": "assistant"})   -> ''       # key absent  — correct
-_message_text({"content": ""})         -> ''       # correct
-_message_text({"content": None})       -> 'None'   # <-- the bug
+before:  transcript ends '2' -> head reads '2'     ends 'x' -> reads 'x'   ends 's' -> reads 's'
+after :  transcript ends '2' -> head reads '>'     ends 'x' -> reads '>'   ends 's' -> reads '>'
 ```
-**Root cause:** `content = choice_message.get("content", "")`. `dict.get`'s default only fires when the key is **absent**, not when it is present-and-null. OpenAI-compatible APIs send `"content": null` routinely — a reasoning-only turn, a completion cut at `max_tokens` before the first content token, a tool-call-only turn. `None` then failed both `isinstance` checks and fell through to the trailing `return str(content)`.
-**Fix / decision:** handle `None` explicitly and return `""`. Keep `str(content)` as the fallback for genuinely unexpected types, so the function still degrades loudly rather than silently dropping a payload it does not understand.
-**Why it mattered more than it looks:** `_message_text` feeds `ChatResult.text`, which has two consumers. `session.py` appends it to the multi-turn transcript the coordinator encodes to choose the next `(agent, role)` — so the router was conditioning on a token sequence no model ever emitted. `eval.py` passes it to `adapter.score_output`, so a null completion was graded as if the model had answered "None". It also erased the distinction between an empty completion and a null one, which is exactly the signal you want when diagnosing truncation.
-**Follow-up:** none. The fallback for unexpected types is deliberately unchanged.
+**Root cause:** two changes that each look right in isolation. Appending EOS *does* create a penultimate position — but **attention is causal**, so the hidden state at `-2` cannot attend to the EOS at `-1`. `h[-2]` with an EOS appended is bit-identical to the last content token's state with no EOS at all (pinned by `test_appending_eos_is_a_noop_under_causal_attention`, which builds a minimal causal block and asserts the equality). The EOS append was therefore a **no-op**: it renamed the last content token as "penultimate" without changing which vector the head sees. Only the suffix creates a position whose identity is independent of the transcript.
+**Why it matters:** the head's sole input (SPEC §3.2: *"no pooling, no turn index, no role one-hots"*) was a token that varies with whatever the transcript happened to end on — a code brace, a digit, a period. SPEC §3.2 records the ablation for reading a content token rather than the intended one: **LiveCodeBench 61.46 → 50.85**.
+**Fix / decision:** append `HEAD_INPUT_SUFFIX = "\n<Head Input>"` before tokenizing, and export it as a module constant so train and inference cannot drift. Keep the EOS append and the `-2` read exactly as SPEC prescribes — with the suffix present, `-2` is now the suffix's final token.
+**Consequence to be explicit about:** this changes the coordinator's feature. `encode` is called by both training and evaluation, so the two stay consistent with each other — but any head trained *before* this fix was fitted to the old (last-content-token) feature. Those heads are not comparable to heads trained after it, and the leaderboard's archived `best_theta` files were fitted to the wrong feature. This wants a re-train, exactly as the 2026-06-23 extraction fix did.
+**Follow-up:** the guard `input_ids.shape[1] < 2` can no longer trigger, since the suffix alone tokenizes to several tokens; left in place as a cheap invariant. Worth a follow-up: assert at load time that the tokenizer does not merge the suffix's final `>` into a preceding token for some other checkpoint.
 
 ---
+
+## 2026-07-10 — Cost-ledger verifier hashed a different JSON string than the writer  #mistake #decision
+**Context:** checking the token-cost ledger path used by training, `cost_report.py`,
+and submission packing.
+**Expected:** a ledger written by `OpenRouterPool._ledger_append` verifies in
+`scripts/cost_report.py --ledger`, and the submission packer prices the same
+entries from the same parsed rows.
+**Actual:** legitimate ledgers failed verification. The writer hashed a fixed,
+compact payload string (`{"m":"...","p":...,"c":...}` in that key order), while
+the verifier rebuilt the payload with `json.dumps(..., sort_keys=True)`, which
+changes the byte string and therefore the hash. `pack_submission.py` then read
+the same file through a separate ad-hoc path, so the write, verify, and summarize
+steps were not sharing one canonical implementation.
+**Root cause:** the hash-chain format existed only implicitly inside the writer.
+Verifiers reimplemented it differently, and nothing enforced one shared payload
+encoding.
+**Fix / decision:** add `trinity.llm.cost_ledger` as the single source of truth
+for payload formatting, chained hashing, line parsing, ledger verification, and
+append helpers. Route `openrouter_client`, `cost_report.py`, and
+`pack_submission.py` through it, and cover the regression with
+`tests/test_cost_ledger.py`.
+**Follow-up:** the append helper writes text-only handles; keeping the test hook
+typed as `TextIO` avoids implying binary support the implementation does not have.
+
+## 2026-07-10 — Rate-limit gate counted wins, not attempts  #mistake #finding #decision
+
+**Context:** follow-up from the UTC timestamp fix on Gate 1 (`_check_rate_limit`).
+`SUBMITTING.md` says "1 submission per benchmark per week".
+**Expected:** any evaluated submission consumes the weekly slot, win or lose.
+**Actual:** `_update_leaderboard` (the only writer into `history`) ran only on
+`score > best_score`. Score-rejections and later gate failures never touched the
+log, so Gate 1 only saw prior *wins*. A miner could lose, immediately resubmit,
+and probe the hidden benchmark without waiting 7 days.
+**Root cause:** rate limit reused the win-only `history` log instead of an
+attempt log.
+**Fix / decision:** record an `attempts` entry as soon as Gate 1 passes (slot
+consumed even if Gate 2+ fails or the score loses). Gate 1 reads `attempts`,
+falling back to legacy `history` when `attempts` is absent. First write seeds
+`attempts` from existing `history` so recent winners stay rate-limited after
+rollout. Covered by `tests/test_pr_eval_rate_limit.py`.
+**Follow-up:** none for this hole.
+
+---
+
+## 2026-07-10 — Passing a price table silently made the Conductor free  #mistake #gotcha
+**Context:** checking the pre-launch projections in `fugu/cost.py` before trusting them to size a paid GRPO run. The module's stated job is to stop us launching a paid job blind.
+**Expected:** `conductor_local=False` + `conductor_model="minimax-m3"` prices the Conductor's generation, whichever way the worker prices were supplied.
+**Actual:** passing `prices=` billed the Conductor **$0**, while the returned `assumptions` still said `conductor_local: False` — an internally self-contradictory estimate.
+```
+prices=None (default table)   conductor_api_usd = 1.5
+prices=dict(PRICES) passed    conductor_api_usd = 0.0     # same config
+assumptions.conductor_local (passed table): False
+```
+**Root cause:** `conductor_local` and `conductor_model` were consumed **only inside `price_table`**. `estimate_grpo_cost` did `table = prices if prices is not None else price_table(...)`, so an explicit table skipped that branch and both knobs were ignored. A worker price table carries no `"<conductor>"` key, so `table.get(CONDUCTOR_KEY, (0.0, 0.0))` returned zeros and the Conductor cost nothing. The rule for *when the Conductor is billed* lived in one function while the *decision to bill it* was taken in another.
+**Fix / decision:** extract that rule into `_conductor_price(lookup, conductor_model, conductor_local)` and call it from both `price_table` and the estimator. An explicit `prices` table stays authoritative for the **worker** models — no caller passes one today, so nothing depends on the old replace-everything semantics — but it no longer disables Conductor pricing: the entry is derived unless the caller supplied `CONDUCTOR_KEY` themselves, and the model's rate resolves against `PRICES` overlaid with the caller's table. The caller's dict is copied, not mutated.
+**Why it mattered:** the prompted-Conductor baseline is exactly the `conductor_local=False` configuration, and it makes one Conductor call per rollout. At the module's own defaults (200 iterations × 4 questions × group size 64 = 51,200 rollouts) the estimate dropped an entire cost component. An under-stating projection is worse than none: this JOURNAL already records runs killed mid-flight on cost ($0.50, $1.59, ~$22 ledgered).
+**Follow-up:** `run_cost` (the *exact*, post-hoc accounting) also takes `prices` and defaults to `price_table()` with a local Conductor. That is correct for its purpose — it prices observed per-model token totals and never looks up `CONDUCTOR_KEY` — but the two functions' `prices` parameters now mean subtly different things, which is worth a docstring note if a third caller appears.
+
+## 2026-07-10 — Math grader false-negatives on LaTeX-grouped thousands (`1{,}000`)  #mistake #finding #decision
+
+**Context:** the math grader (`orchestration/reward.py`) already strips *bare*
+digit-grouping commas (`1,000` -> `1000`). Checking whether MATH-500's other common
+thousands form is handled.
+**Expected:** `\boxed{2{,}048}` grades equal to `2048`.
+**Actual:** it graded **wrong** (score 0.0). MATH-500 frequently writes thousands
+with LaTeX's `{,}` group (which renders as a comma): `\boxed{1{,}000}`,
+`\boxed{2{,}048}`, `\boxed{1{,}234{,}567}`. The braces defeat both halves of the
+grader — `extract_last_number` split `1{,}000` into `1` and `000` (returning
+`000`), and `normalize_math_answer`'s comma-strip only matched a bare comma, so the
+braced form survived and never equalled the plain reference.
+**Root cause:** `{,}` was never normalised to a bare comma, so neither the
+thousands-separator regex nor the comma-strip saw it.
+**Fix / decision:** replace `{,}` -> `,` early in both `extract_last_number` and
+`normalize_math_answer`, so the existing (already-tested) comma handling removes it.
+Additive to the bare-comma logic; a comma-separated *list* (`1,2,3`) and genuinely
+wrong answers stay wrong (no false positives). Covered by
+`tests/test_reward_latex_thousands.py`.
+**Follow-up:** none. (`1\,000` — the `\,` thin-space form — is already handled in
+`normalize_math_answer`'s token strip.)
+
+## 2026-07-10 — `main` went red: cache-prompt test not updated for the `_cache_answers` refactor  #mistake #gotcha
+
+**Context:** two changes landed close together — the cache-prompt fix (which added
+`tests/test_build_benchmark_cache_prompt.py`, asserting `_cache_answers` uses a
+WORKER turn) and the #62 refactor that routes caching through the adapter registry.
+**Expected:** green `main`.
+**Actual:** `pytest` fails 2/2 in `test_build_benchmark_cache_prompt.py`. #62 changed
+`_cache_answers(items, ...)` to `_cache_answers(task_item_pairs, ...)` — it now takes
+`(task, item)` pairs and renders the prompt via `get_adapter(task.benchmark)
+.build_prompt(task)` — but the test still called the old `(items, ...)` signature.
+**Root cause:** the test encoded the *old* call shape; the refactor updated the
+function and its caller but not this test, and with no CI gate the break merged.
+**Fix / decision:** update the test to the `(task, item)` pair API and assert the
+prompt equals `build_messages(Role.WORKER, adapter.build_prompt(task), [])` (still
+pinning the WORKER-turn behaviour, now through the adapter). The `_cache_answers`
+WORKER-turn fix itself is intact after #62; only the test was stale. Full suite
+green again.
+**Follow-up:** the offline PR CI in #52 would have caught this; worth landing.
+
+## 2026-07-10 — govern job 403 on fork PR label write-back  #mistake #decision
+
+**Context:** PR-bot governance (`pr-bot.yml`) from #51; every fork PR failed the
+`govern` check on `ensure_labels.py` (issue #84, part 1). Routing-template false
+positives were fixed separately in #86 (issue #85).
+**Expected:** fork PRs run deterministic analysis even when `GITHUB_TOKEN` cannot
+create labels or post comments.
+**Actual:** `ensure_labels.py` raised on HTTP 403; `run_pr_bot.py` returned exit 1
+when label write-back was rejected.
+**Fix / decision:** treat 403 on label create / PR write-back as a warning (exit 0);
+analysis output is still printed. Routing detection unchanged on `main` (#86).
+**Follow-up:** if labels must be applied to fork PRs automatically, add a minimal
+`pull_request_target` workflow that only calls the labels API.
+
 ## 2026-07-10 — Duplicate-detection gate (Gate 3) defeated by re-rolling SVF scales  #mistake #finding #decision
 
 **Context:** auditing the anti-cheat gates in `scripts/pr_eval.py`. Gate 3
@@ -72,6 +185,21 @@ seed=1: identical first population? True
 **Root cause:** pycma special-cases the value. `cma.CMAOptions.defaults()["seed"]` documents itself as *"random number seed for `numpy.random`; `None` and `0` equate to `time`, `np.nan` means 'do nothing'"*. So `opts["seed"] = 0` means **seed from the clock**. And `0` was the default at every level: `SepCMAES(seed=0)`, `run(seed=0)`, `trinity.train --seed default=0`, and the class's own usage example on line 72. What hid it is that the *other* consumers of `args.seed` really are deterministic — `load_tasks(seed=...)` and `gen_rng = random.Random(seed*100000 + gen)` — so a re-run draws the same tasks in the same order and only the CMA-ES trajectory silently diverges. It looks reproducible until the fitness curve differs.
 **Fix / decision:** stop forwarding the seed to pycma. Pass `np.nan` (pycma's documented "do nothing") and call `np.random.seed(self.seed)` ourselves, since numpy treats `0` as an ordinary seed. This is behavior-preserving: pycma implements an honoured `seed=k` as exactly `np.random.seed(k)`, verified by a test that reconstructs the reference stream directly from `cma.CMAEvolutionStrategy` — so every previously-working seed keeps its byte-identical stream and archived fitness curves stay reproducible. `0` simply joins them. Rejected the tempting one-liner `seed or 1`, which would silently alias seeds 0 and 1 onto one stream (pinned by `test_zero_and_one_are_not_aliased`). Seeds outside `[0, 2**32-1]` now raise instead of reaching numpy.
 **Follow-up:** the wrapper still seeds the **global** `numpy.random` state — that is unchanged from before (pycma did it too), but it means constructing a `SepCMAES` perturbs unrelated numpy randomness in the process. Isolating it behind a `np.random.Generator` / pycma's `randn` option is worth doing separately. Also relevant to the receipt gate in `pr_eval.py`: a "plausible CMA-ES fitness curve" is only re-derivable now that the default seed is honoured.
+
+## 2026-07-10 — MMLU `train` split resolved via shared split_policy  #finding #decision
+
+**Context:** `load_tasks("mmlu", "train")` silently fell back to the 2-item toy set
+because `cais/mmlu` publishes `auxiliary_train`, not `train` (issue #35).
+**Expected:** training and benchmark builds load real MMLU rows for logical `train`.
+**Actual:** `_try_load_hf` swallowed the unknown-split error; `load_split` substituted
+the toy set with no warning.
+**Root cause:** split name forwarded verbatim; no alias table on the built-in loader path
+(MMLU-Pro already fixed this in `split_policy.py` for its adapter).
+**Fix / decision:** extend `split_policy._SPLIT_ALIASES` with `mmlu: train →
+auxiliary_train`, resolve in `loaders.load_split`, and emit `ToyFallbackWarning` when
+the toy set stands in. Keeps one split-resolution module for all benchmarks.
+**Follow-up:** GPQA still has only an upstream `train` split; deterministic holdout for
+logical `test` is separate work.
 
 ## 2026-07-10 — Hidden-benchmark cached answers used a bare prompt, not the WORKER turn  #mistake #finding #decision
 
@@ -119,10 +247,8 @@ of UTC evade the rate limit (their prior submission reads as older than it is).
 timezone-independent. Covered by `tests/test_pr_eval_rate_limit.py` (asserts the
 true UTC epoch via `datetime(..., tzinfo=utc)`, and — where `time.tzset` exists —
 re-checks under forced non-UTC zones).
-**Follow-up:** none for this bug. Separately noted while reading the gate: only
-*approved* submissions are appended to `history`, so the rate limit currently
-counts prior *wins*, not prior *attempts* — a larger design question left for its
-own change.
+**Follow-up:** none for this bug. (Superseded 2026-07-10: rate limit now
+counts attempts via the `attempts` log, not only approved wins.)
 
 ---
 

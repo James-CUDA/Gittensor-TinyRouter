@@ -83,37 +83,13 @@ def _ledger_append(model: str, prompt_tokens: int, completion_tokens: int) -> No
     one short line per call (atomic enough for concurrent training processes).
     Best-effort: never let cost bookkeeping break an inference call.
     """
-    import hashlib
-
     path = os.environ.get("TRINITY_COST_LEDGER")
     if not path:
         return
     try:
-        short = model.rsplit("/", 1)[-1]
-        pt = int(prompt_tokens)
-        ct = int(completion_tokens)
+        from trinity.llm.cost_ledger import append_ledger_entry
 
-        prev_hash = ""
-        try:
-            with open(path, "r") as fh:
-                last = None
-                for line in fh:
-                    line = line.strip()
-                    if line:
-                        last = line
-                if last is not None:
-                    import json as _json
-
-                    prev = _json.loads(last)
-                    prev_hash = prev.get("h", "")
-        except (OSError, ValueError):
-            prev_hash = ""
-
-        payload = f'{{"m":"{short}","p":{pt},"c":{ct}}}'
-        h = hashlib.sha256((prev_hash + payload).encode()).hexdigest()
-
-        with open(path, "a") as f:
-            f.write(f'{{"m":"{short}","p":{pt},"c":{ct},"h":"{h}"}}\n')
+        append_ledger_entry(path, model, prompt_tokens, completion_tokens)
     except Exception:
         pass
 
@@ -121,23 +97,13 @@ def _ledger_append(model: str, prompt_tokens: int, completion_tokens: int) -> No
 def _message_text(choice_message: dict) -> str:
     """Normalize OpenRouter/OpenAI message content to plain text.
 
-    A turn with no text content is the empty string. OpenAI-compatible APIs express
-    that as ``"content": null`` (a reasoning-only turn, a completion cut at
-    ``max_tokens`` before any content token, or a tool-call-only turn), which is
-    distinct from the key being absent. ``dict.get(key, default)`` only substitutes
-    the default for an *absent* key, so ``None`` must be handled explicitly --
-    otherwise it falls through to ``str(content)`` and yields the literal ``"None"``,
-    which would then enter the transcript and the reward scorer as if the model had
-    answered with that word.
-
-    Args:
-        choice_message: The ``choices[i]["message"]`` object from the API response.
-
-    Returns:
-        The message's text, or ``""`` when the turn carried no text content.
+    ``message.content`` is nullable in the chat-completions schema: providers send
+    ``null`` for an empty completion, or when the assistant message carries only
+    reasoning / tool-call metadata. "No text" normalizes to ``""`` — the same as a
+    missing key or an empty content list — never to the string ``"None"``.
     """
 
-    content = choice_message.get("content")
+    content = choice_message.get("content", "")
     if content is None:
         return ""
     if isinstance(content, str):

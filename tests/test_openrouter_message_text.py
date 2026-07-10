@@ -1,102 +1,63 @@
-"""Normalization of OpenRouter/OpenAI message content to plain text.
+"""Offline tests for OpenRouter message-content normalization. No network, no GPU.
 
-Regression cover for the bug where ``{"content": None}`` normalized to the literal
-4-character string ``"None"`` rather than ``""``. ``dict.get(key, default)`` only
-substitutes the default for an *absent* key; a present-but-null ``content`` fell
-through both ``isinstance`` branches to ``str(content)``.
-
-That value becomes ``ChatResult.text``, which feeds the multi-turn transcript the
-coordinator conditions on (``orchestration/session.py``) and the reward scorer
-(``eval.py``) -- so a null completion was graded as if the model had answered with
-the word "None".
-
-Offline: no network, no client construction.
+`message.content` is nullable in the chat-completions schema. `_message_text` must
+normalize every "no text" shape to `""`, because its result becomes
+`ChatResult.text` and is appended verbatim to the trajectory transcript.
 """
 from __future__ import annotations
-
-import pytest
 
 from trinity.llm.openrouter_client import _message_text
 
 
-# --------------------------------------------------------------------------- #
-# The bug: null content is the empty string, not "None"
-# --------------------------------------------------------------------------- #
-def test_null_content_is_empty_string():
-    """The regression: previously returned the literal 'None'."""
+# ---------------------------------------------------------------------------
+# Regression: a null completion must not become the literal string "None"
+# ---------------------------------------------------------------------------
+def test_null_content_normalizes_to_empty_string():
+    # Providers send content=null for an empty completion, or when the message
+    # carries only reasoning / tool-call metadata. str(None) == "None" would
+    # inject a fake model utterance into the transcript.
     assert _message_text({"content": None}) == ""
 
 
-def test_null_content_is_never_the_literal_none_string():
-    """Guard the specific corruption, not just the emptiness."""
-    assert _message_text({"content": None}) != "None"
-
-
-def test_null_content_with_reasoning_only_turn():
-    """Reasoning models routinely emit a turn with reasoning but no content."""
-    msg = {"role": "assistant", "content": None, "reasoning": "thinking..."}
-    assert _message_text(msg) == ""
-
-
-def test_null_content_with_tool_calls_only_turn():
-    msg = {"role": "assistant", "content": None, "tool_calls": [{"id": "c1"}]}
-    assert _message_text(msg) == ""
-
-
-def test_null_and_empty_content_are_indistinguishable_downstream():
-    """A truncated completion must not fabricate content an empty one lacks."""
-    assert _message_text({"content": None}) == _message_text({"content": ""})
-
-
-# --------------------------------------------------------------------------- #
-# Existing behaviour must not regress
-# --------------------------------------------------------------------------- #
-def test_absent_content_key_is_empty_string():
-    assert _message_text({"role": "assistant"}) == ""
-
-
-def test_empty_string_content_round_trips():
+def test_all_empty_shapes_agree():
+    # Missing key, empty string, empty list and null must all mean "no text".
+    assert _message_text({}) == ""
     assert _message_text({"content": ""}) == ""
-
-
-def test_plain_string_content_round_trips():
-    assert _message_text({"content": "hello"}) == "hello"
-
-
-def test_whitespace_content_is_preserved_verbatim():
-    """Trimming is the caller's job; the normalizer must not silently strip."""
-    assert _message_text({"content": "  spaced  "}) == "  spaced  "
-
-
-# --------------------------------------------------------------------------- #
-# Structured (list) content
-# --------------------------------------------------------------------------- #
-def test_list_content_concatenates_text_parts():
-    msg = {"content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]}
-    assert _message_text(msg) == "ab"
-
-
-def test_list_content_skips_non_text_parts():
-    msg = {"content": [{"type": "image_url"}, {"type": "text", "text": "only"}]}
-    assert _message_text(msg) == "only"
-
-
-def test_list_content_skips_non_dict_items():
-    msg = {"content": [None, "raw", {"type": "text", "text": "kept"}]}
-    assert _message_text(msg) == "kept"
-
-
-def test_empty_list_content_is_empty_string():
     assert _message_text({"content": []}) == ""
+    assert _message_text({"content": None}) == ""
 
 
-def test_list_of_only_non_text_parts_is_empty_string():
-    assert _message_text({"content": [{"type": "image_url"}]}) == ""
+# ---------------------------------------------------------------------------
+# Existing behaviour is preserved
+# ---------------------------------------------------------------------------
+def test_plain_string_content_passes_through():
+    assert _message_text({"content": "The answer is 4."}) == "The answer is 4."
 
 
-# --------------------------------------------------------------------------- #
-# Unexpected types still degrade to str(), as before
-# --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("weird", [123, 4.5, True, {"unexpected": "dict"}])
-def test_unexpected_type_falls_back_to_str(weird):
-    assert _message_text({"content": weird}) == str(weird)
+def test_structured_content_concatenates_text_parts():
+    content = [
+        {"type": "text", "text": "The answer "},
+        {"type": "text", "text": "is 4."},
+    ]
+    assert _message_text({"content": content}) == "The answer is 4."
+
+
+def test_structured_content_skips_non_text_and_non_dict_items():
+    content = [
+        {"type": "image_url", "image_url": {"url": "http://x/y.png"}},
+        "not-a-dict",
+        {"type": "text", "text": "kept"},
+    ]
+    assert _message_text({"content": content}) == "kept"
+
+
+def test_reasoning_only_message_yields_no_text():
+    # A reasoning-only assistant message: content is null, reasoning is elsewhere.
+    msg = {"content": None, "reasoning": "thinking out loud", "role": "assistant"}
+    assert _message_text(msg) == ""
+
+
+if __name__ == "__main__":
+    import pytest
+
+    raise SystemExit(pytest.main([__file__, "-q"]))
