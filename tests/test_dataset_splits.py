@@ -16,9 +16,11 @@ without a network. ``_try_load_hf`` imports ``datasets`` lazily, so injecting
 from __future__ import annotations
 
 import contextlib
+import importlib.util
 import sys
 import types
 import warnings
+from pathlib import Path
 
 import pytest
 
@@ -29,13 +31,15 @@ from trinity.adapters.loaders import (
 )
 from trinity.orchestration.dataset import load_tasks
 
+_REPO = Path(__file__).resolve().parents[1]
+
 # Split sets the real HuggingFace datasets actually expose, keyed by (path, config).
 _REAL_SPLITS: dict[tuple[str, str | None], set[str]] = {
     ("cais/mmlu", "all"): {"test", "validation", "dev", "auxiliary_train"},
 }
 
 
-def _install_fake_datasets(monkeypatch, requested: list[dict[str, object]]):
+def _install_fake_datasets(monkeypatch, requested: list[dict[str, object]], n_rows: int = 6):
     """Install a fake ``datasets`` module mimicking real upstream split sets.
 
     Records every ``load_dataset`` call into ``requested`` and raises for any
@@ -58,7 +62,7 @@ def _install_fake_datasets(monkeypatch, requested: list[dict[str, object]]):
                 "answer": i % 4,
                 "subject": "astronomy",
             }
-            for i in range(6)
+            for i in range(n_rows)
         ]
 
     module = types.ModuleType("datasets")
@@ -218,3 +222,39 @@ def test_offline_toy_fallback_still_serves_smoke_tests(monkeypatch):
 
     assert len(tasks) == 2
     assert all(t.benchmark == "math500" for t in tasks)
+
+
+# --------------------------------------------------------------------------- #
+# The sealed hidden-benchmark protocol (#14) samples the "train" split
+# --------------------------------------------------------------------------- #
+def _load_protocol():
+    """Import ``scripts/benchmark_protocol.py`` the way its own test suite does."""
+    spec = importlib.util.spec_from_file_location(
+        "benchmark_protocol", _REPO / "scripts" / "benchmark_protocol.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["benchmark_protocol"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_sealed_protocol_can_build_an_mmlu_pool(monkeypatch):
+    """``protocol.sample_pool`` asks ``load_tasks`` for the ``"train"`` split.
+
+    With MMLU's train split unresolved that yielded the 2-item toy set, and
+    ``select_splits`` then died with ``pool has 2 tasks but the protocol needs
+    220`` -- an error naming neither MMLU's split nor the toy fallback. Building
+    the MMLU hidden benchmark was impossible.
+    """
+    protocol = _load_protocol()
+    counts_needed = 2000  # comfortably more than pool_size * 3
+    _install_fake_datasets(monkeypatch, [], n_rows=counts_needed)
+
+    counts = protocol.split_counts("mmlu")
+    pool = protocol.sample_pool(load_tasks, "mmlu", counts)
+
+    assert len(pool) == protocol.pool_size(counts)
+    assert not any(t.task_id.startswith("mmlu-toy") for t in pool)
+
+    splits = protocol.select_splits(pool, counts)
+    assert {k: len(v) for k, v in splits.items()} == dict(counts)
