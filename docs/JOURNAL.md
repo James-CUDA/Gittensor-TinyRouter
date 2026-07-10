@@ -30,6 +30,26 @@ That error names neither the toy fallback nor the split that failed to load. Som
 **Root cause:** the loaders correctly *report* the substitution, but the only consumer for whom toy data is categorically unacceptable — the sealed, integrity-hashed hidden benchmark — never listened. `select_splits`' size check caught it by accident, one stage too late, because 2 < 220. A benchmark whose toy set happened to exceed the protocol's counts would have been sealed and hashed as real data with nothing but a warning on stderr.
 **Fix / decision:** escalate `ToyFallbackWarning` to an error inside `_sample_pool` (`warnings.simplefilter("error", ToyFallbackWarning)`), and re-raise it as a `RuntimeError` that names the benchmark, quotes the original warning, and states the remedy. The original warning is preserved as `__cause__` rather than swallowed. Chose this over threading an `allow_toy_fallback=False` flag up through `BenchmarkAdapter.load_tasks`: escalating the warning reuses the signal #73 already added, changes no interface, and cannot be forgotten by the next adapter — any loader that warns is covered for free.
 **Follow-up:** `trinity.train` has the same exposure — training on 2 toy questions produces a normal-looking receipt — but it goes through `load_tasks` rather than `_sample_pool`, so it needs its own decision about whether an offline smoke run should stay permitted. Deliberately out of scope here.
+## 2026-07-10 — pack_submission priced ledger with flat blended rate, not in/out split  #mistake #finding #decision
+**Context:** wiring training receipts (`scripts/pack_submission.py`) to the verified
+cost ledger after #87 landed `trinity.llm.cost_ledger`.
+**Expected:** `receipt.json` → `total_cost_usd` matches
+`scripts/cost_report.py --ledger` on the same file (per-model prompt vs
+completion rates).
+**Actual:** pack used a hard-coded ``0.90 * (p + c) / 1M`` for every model.
+Example — 1M prompt tokens on qwen3.5-35b-a3b: cost_report charges **$0.14**;
+pack wrote **$0.90** into the receipt. Gate 4 (`pr_eval.py`) cross-checks
+``total_cost_usd`` against a plausible training spend, so receipts disagreed
+with maintainer tooling and could false-pass or false-fail the minimum-cost gate.
+**Root cause:** ledger verification was centralized in #87, but dollar pricing
+still lived only in `cost_report.py` while pack kept a stale blended shortcut.
+**Fix / decision:** add `trinity.llm.openrouter_pricing` as the single rate table
++ `token_cost` / `verified_ledger_total_usd` helpers; route both
+`cost_report.py` and `pack_submission.py` through it. Covered by
+`tests/test_openrouter_pricing.py`.
+**Follow-up:** `trinity.fugu.cost.PRICES` and oracle-ceiling defaults remain a
+separate table — dedupe is tracked in the open refactor PR #8.
+
 ## 2026-07-10 — Cost-ledger verifier hashed a different JSON string than the writer  #mistake #decision
 **Context:** checking the token-cost ledger path used by training, `cost_report.py`,
 and submission packing.
