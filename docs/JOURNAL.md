@@ -34,6 +34,21 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 **Follow-up:** the gate now enforces itself. Separately, the `govern` job still fails on every fork PR (403 on the labels API, since `pull_request` grants a read-only token to forks) — that is a workflow-permissions decision for the maintainer, tracked apart from this.
 
 ---
+
+## 2026-07-10 — Passing a price table silently made the Conductor free  #mistake #gotcha
+**Context:** checking the pre-launch projections in `fugu/cost.py` before trusting them to size a paid GRPO run. The module's stated job is to stop us launching a paid job blind.
+**Expected:** `conductor_local=False` + `conductor_model="minimax-m3"` prices the Conductor's generation, whichever way the worker prices were supplied.
+**Actual:** passing `prices=` billed the Conductor **$0**, while the returned `assumptions` still said `conductor_local: False` — an internally self-contradictory estimate.
+```
+prices=None (default table)   conductor_api_usd = 1.5
+prices=dict(PRICES) passed    conductor_api_usd = 0.0     # same config
+assumptions.conductor_local (passed table): False
+```
+**Root cause:** `conductor_local` and `conductor_model` were consumed **only inside `price_table`**. `estimate_grpo_cost` did `table = prices if prices is not None else price_table(...)`, so an explicit table skipped that branch and both knobs were ignored. A worker price table carries no `"<conductor>"` key, so `table.get(CONDUCTOR_KEY, (0.0, 0.0))` returned zeros and the Conductor cost nothing. The rule for *when the Conductor is billed* lived in one function while the *decision to bill it* was taken in another.
+**Fix / decision:** extract that rule into `_conductor_price(lookup, conductor_model, conductor_local)` and call it from both `price_table` and the estimator. An explicit `prices` table stays authoritative for the **worker** models — no caller passes one today, so nothing depends on the old replace-everything semantics — but it no longer disables Conductor pricing: the entry is derived unless the caller supplied `CONDUCTOR_KEY` themselves, and the model's rate resolves against `PRICES` overlaid with the caller's table. The caller's dict is copied, not mutated.
+**Why it mattered:** the prompted-Conductor baseline is exactly the `conductor_local=False` configuration, and it makes one Conductor call per rollout. At the module's own defaults (200 iterations × 4 questions × group size 64 = 51,200 rollouts) the estimate dropped an entire cost component. An under-stating projection is worse than none: this JOURNAL already records runs killed mid-flight on cost ($0.50, $1.59, ~$22 ledgered).
+**Follow-up:** `run_cost` (the *exact*, post-hoc accounting) also takes `prices` and defaults to `price_table()` with a local Conductor. That is correct for its purpose — it prices observed per-model token totals and never looks up `CONDUCTOR_KEY` — but the two functions' `prices` parameters now mean subtly different things, which is worth a docstring note if a third caller appears.
+
 ## 2026-07-10 — Math grader false-negatives on LaTeX-grouped thousands (`1{,}000`)  #mistake #finding #decision
 
 **Context:** the math grader (`orchestration/reward.py`) already strips *bare*
