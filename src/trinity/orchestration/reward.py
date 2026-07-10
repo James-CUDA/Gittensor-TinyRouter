@@ -58,6 +58,7 @@ __all__ = [
     "MATH_BENCHMARKS",
     "CHOICE_BENCHMARKS",
     "CODE_BENCHMARKS",
+    "resolve_benchmark",
 ]
 
 # Benchmark routing tables. Keys are matched case-insensitively against
@@ -74,6 +75,39 @@ _CHOICE_LETTERS: str = "ABCDEFGHIJ"
 CODE_BENCHMARKS: frozenset[str] = frozenset(
     {"livecodebench", "lcb", "bigcodebench", "bigcode"}
 )
+
+# Some frozen hidden-benchmark items carry a versioned adapter *identity* as
+# their benchmark instead of a bare family key: the LiveCodeBench v6 adapter
+# serialises ``"livecodebench_v6"`` so the frozen item records which release
+# produced it (see ``adapters.livecodebench.LiveCodeBenchV6Adapter``). That
+# identity is not itself a dispatch key, so it must be mapped to the family its
+# checker is registered under; otherwise ``score_text``/``has_answer`` treat
+# every frozen v6 item as an unknown benchmark and raise. Kept as an explicit map
+# (never fuzzy suffix-stripping) so a real benchmark can never be mis-routed.
+_BENCHMARK_ALIASES: dict[str, str] = {
+    "livecodebench_v6": "livecodebench",
+}
+
+
+def resolve_benchmark(benchmark: str) -> str:
+    """Normalize a benchmark identifier to its dispatch key.
+
+    Lower-cases and trims ``benchmark``, then maps a known versioned/adapter
+    *identity* (see ``_BENCHMARK_ALIASES``) onto the ``MATH``/``CHOICE``/``CODE``
+    dispatch key its checker is registered under. Unknown or already-canonical
+    keys are returned unchanged, so this is a safe no-op for the four shipped
+    benchmarks and for a genuinely unrecognized name (which still raises in
+    :func:`score_text`).
+
+    Args:
+        benchmark: Raw benchmark identifier, e.g. ``"livecodebench_v6"`` or
+            ``"MATH500"``.
+
+    Returns:
+        The canonical dispatch key, lower-cased and trimmed.
+    """
+    key = (benchmark or "").strip().lower()
+    return _BENCHMARK_ALIASES.get(key, key)
 
 
 # ---------------------------------------------------------------------------
@@ -119,24 +153,73 @@ def _committed_answer(benchmark: str, traj: Trajectory) -> str:
     """Pick the text to score from a multi-turn trajectory.
 
     ``_final_answer`` (last Worker output) is often a verbose derivation with no
-    cleanly-extractable answer, while an answer DID appear in some turn. To avoid
-    throwing away answers the system actually produced, score the MOST RECENT turn
-    whose output yields an extractable answer for this task type; fall back to
-    ``final_answer``. This applies equally to TRINITY and the random baseline (the
-    single-model baseline is one turn, so it is unaffected) — a fair fix, not a thumb
-    on the scale. See JOURNAL 2026-06-23 (MMLU extraction diagnosis).
+    cleanly-extractable answer, while an answer DID appear in an earlier turn. To
+    avoid throwing away answers the system actually produced, score the most
+    recent turn whose output yields an extractable answer for this task type;
+    fall back to ``final_answer``. This applies equally to TRINITY and the random
+    baseline (the single-model baseline is one turn, so it is unaffected) — a fair
+    fix, not a thumb on the scale. See JOURNAL 2026-06-23 (MMLU extraction).
+
+    Verifier turns are never eligible. A Verifier-ACCEPT run terminates *on* a
+    Verifier turn (see :func:`~trinity.orchestration.session.run_trajectory`), and
+    post-processing is pass-through (:mod:`trinity.roles.postprocess`), so the
+    Verifier's ``processed_output`` keeps its full critique — which routinely
+    mentions a choice letter or number it is only *discussing* ("the worker points
+    at B ... VERDICT: ACCEPT"). Scoring that text would credit or penalise the run
+    for the *checker's* words rather than an answer the solver committed. The
+    scored answer is the last non-verifier ``O_k``, matching
+    :func:`~trinity.orchestration.session._final_answer` and the
+    :func:`_terminating_role` contract. Prefer the most recent Worker turn, then
+    any other non-verifier turn.
     """
     key = (benchmark or "").strip().lower()
     final = traj.final_answer or ""
-    turns = getattr(traj, "turns", None) or []
-
     if has_answer(key, final):
         return final
-    for tr in reversed(turns):
-        txt = getattr(tr, "processed_output", "") or ""
-        if has_answer(key, txt):
-            return txt
+
+    turns = getattr(traj, "turns", None) or []
+    # Worker turns are the answer-producing role; prefer them, then fall back to
+    # any other non-verifier turn (e.g. a Thinker that stated the result).
+    worker = _last_answerful_output(key, turns, role=Role.WORKER)
+    if worker is not None:
+        return worker
+    other = _last_answerful_output(key, turns, role=None)
+    if other is not None:
+        return other
     return final
+
+
+def _last_answerful_output(
+    benchmark: str, turns: Sequence, *, role: Role | None
+) -> str | None:
+    """Return the newest turn output that carries an extractable answer.
+
+    Scans ``turns`` newest-first and returns the first ``processed_output`` that
+    :func:`has_answer` accepts for ``benchmark``.
+    :attr:`~trinity.types.Role.VERIFIER` turns are always skipped — the Verifier
+    checks the solution, it never sources the committed answer. When ``role`` is
+    given only turns of that role are considered; when ``role`` is ``None`` every
+    non-verifier turn is eligible.
+
+    Args:
+        benchmark: Benchmark identifier (case-insensitive), already lower-cased.
+        turns: The trajectory's turns, oldest-first.
+        role: Restrict to this role, or ``None`` for any non-verifier role.
+
+    Returns:
+        The matching ``processed_output``, or ``None`` when no eligible turn
+        carries an extractable answer.
+    """
+    for tr in reversed(turns):
+        tr_role = getattr(tr, "role", None)
+        if tr_role == Role.VERIFIER:
+            continue
+        if role is not None and tr_role != role:
+            continue
+        txt = getattr(tr, "processed_output", "") or ""
+        if has_answer(benchmark, txt):
+            return txt
+    return None
 
 
 def has_answer(benchmark: str, text: str) -> bool:
@@ -160,7 +243,7 @@ def has_answer(benchmark: str, text: str) -> bool:
     """
     if not text:
         return False
-    key = (benchmark or "").strip().lower()
+    key = resolve_benchmark(benchmark)
     if key in CHOICE_BENCHMARKS:
         return extract_choice_letter(text) is not None
     if key in MATH_BENCHMARKS:
@@ -190,7 +273,7 @@ def score_text(benchmark: str, candidate: str, reference: object) -> float:
     Raises:
         ValueError: If ``benchmark`` is not recognized.
     """
-    key = (benchmark or "").strip().lower()
+    key = resolve_benchmark(benchmark)
     if key in MATH_BENCHMARKS:
         return 1.0 if _check_math(candidate, reference) else 0.0
     if key in CHOICE_BENCHMARKS:

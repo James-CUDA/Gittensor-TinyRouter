@@ -218,8 +218,12 @@ def _task_reward(traj, cfg: FitnessConfig, max_turns: int) -> float:
     if not cfg.shaping_active:
         return correct
     benchmark = (traj.task.benchmark or "").strip().lower()
-    answer_text = traj.final_answer or ""
-    has_ans = _reward.has_answer(benchmark, answer_text)
+    # Score the format bonus on the SAME text ``reward.score`` grades — the
+    # committed (non-verifier) answer — so "has an answer" stays consistent with
+    # "can be scored" (see ``reward.has_answer``). Reading ``final_answer`` alone
+    # denied the bonus to a run whose committed answer lived in an earlier turn.
+    committed = _reward.committed_answer(benchmark, traj)
+    has_ans = _reward.has_answer(benchmark, committed)
     return shaped_reward(
         int(round(correct)),
         has_ans,
