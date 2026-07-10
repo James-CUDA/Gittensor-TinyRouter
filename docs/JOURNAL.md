@@ -18,6 +18,31 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-07-10 — Cost-ledger verifier hashed a different JSON string than the writer  #mistake #decision
+**Context:** checking the token-cost ledger path used by training, `cost_report.py`,
+and submission packing.
+**Expected:** a ledger written by `OpenRouterPool._ledger_append` verifies in
+`scripts/cost_report.py --ledger`, and the submission packer prices the same
+entries from the same parsed rows.
+**Actual:** legitimate ledgers failed verification. The writer hashed a fixed,
+compact payload string (`{"m":"...","p":...,"c":...}` in that key order), while
+the verifier rebuilt the payload with `json.dumps(..., sort_keys=True)`, which
+changes the byte string and therefore the hash. `pack_submission.py` then read
+the same file through a separate ad-hoc path, so the write, verify, and summarize
+steps were not sharing one canonical implementation.
+**Root cause:** the hash-chain format existed only implicitly inside the writer.
+Verifiers reimplemented it differently, and nothing enforced one shared payload
+encoding.
+**Fix / decision:** add `trinity.llm.cost_ledger` as the single source of truth
+for payload formatting, chained hashing, line parsing, ledger verification, and
+append helpers. Route `openrouter_client`, `cost_report.py`, and
+`pack_submission.py` through it, and cover the regression with
+`tests/test_cost_ledger.py`.
+**Follow-up:** the append helper writes text-only handles; keeping the test hook
+typed as `TextIO` avoids implying binary support the implementation does not have.
+
+---
+
 ## 2026-07-10 — Passing a price table silently made the Conductor free  #mistake #gotcha
 **Context:** checking the pre-launch projections in `fugu/cost.py` before trusting them to size a paid GRPO run. The module's stated job is to stop us launching a paid job blind.
 **Expected:** `conductor_local=False` + `conductor_model="minimax-m3"` prices the Conductor's generation, whichever way the worker prices were supplied.

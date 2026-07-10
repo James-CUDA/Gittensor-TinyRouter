@@ -21,7 +21,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, TextIO
+from typing import TextIO
 
 __all__ = [
     "LedgerEntry",
@@ -229,7 +229,7 @@ def append_ledger_entry(
     prompt_tokens: int,
     completion_tokens: int,
     *,
-    file_handle: TextIO | BinaryIO | None = None,
+    file_handle: TextIO | None = None,
 ) -> str:
     """Append one hash-chained entry to a ledger file.
 
