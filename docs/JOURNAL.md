@@ -18,6 +18,17 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-07-10 — A null `usage` block crashed a successful inference call  #mistake #gotcha
+**Context:** hardening `llm/openrouter_client.py` after #72 fixed the `content: null` case, to see whether the same present-but-null trap existed elsewhere in the response parsing.
+**Expected:** a 200-OK response with `"usage": null` records zero tokens and returns the completion.
+**Actual:** `usage = data.get("usage", {})` returns `None` (the `{}` default only applies to an *absent* key, not a present-null one), and the next line `usage.get("prompt_tokens", 0)` raises `AttributeError: 'NoneType' object has no attribute 'get'` — on an otherwise-successful call.
+**Root cause:** the identical `dict.get(k, default)` misuse #72 fixed for `content`, one function away, in the token-accounting path — missed because `_message_text` and the usage parse were treated as separate concerns. OpenAI-compatible providers send `"usage": null` for some backends and for 200s with an empty completion.
+**Why it is worse than the `content` case:** `_message_text` returned a wrong *value* ("None"); this *raises*. The `AttributeError` is not in the `_Retryable` set (only 429/5xx and network errors are), and `@retry(..., reraise=True)` re-raises it out of `chat`. With `eval`/`fitness` now gathering `return_exceptions=True`, that exception becomes the trajectory's result and is scored **0.0** — so a model that answered correctly is silently counted as wrong, in both eval and CMA-ES training reward.
+**Fix / decision:** `usage = data.get("usage") or {}` — covers absent and null identically, exactly mirroring the `if content is None` guard #72 added in the same file. One line; no behaviour change for a populated, empty, or absent usage block.
+**Follow-up:** `choice = data["choices"][0]` and `choice["message"]` are still index/`[]` access, so a response with no `choices` would `KeyError`. That is a genuinely malformed response (not a documented provider behaviour like `usage: null`), so I left it — a separate, weaker concern.
+
+---
+
 ## 2026-07-10 — R1/R2 gave TRINITY 5x the token budget of the baselines it beat  #mistake #gotcha
 **Context:** auditing `trinity/eval.py` against SPEC §1.3 before trusting an R1/R2 verdict.
 **Expected:** the single-model baselines are budget-matched to TRINITY, as SPEC §1.3.4 requires: *"run each single model at `max_tokens = 20,480` (5×) so the single-vs-TRINITY comparison is fair, matching the paper's 5× protocol."* The same 5× appears in the 2026-06-22 SPEC-decisions entry and in SPEC's own R1 row (*"budget-matched 5×"*).
