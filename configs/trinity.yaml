@@ -52,6 +52,9 @@ sep_cmaes:
   init_mean: "head_zero_svf_one"        # W=0 (uniform policy) + SVF scales=1.0
   bounds: null
   seed: 0
+  val_fraction: 0.0                     # held-out share for validation-based model selection
+                                        # (issue #172); 0.0 = save es.best() by train fitness
+  patience: 0                           # early-stop after N generations w/o val gain; 0 = off
   fitness:
     metric: "accuracy"                  # mean binary reward R(tau) in {0,1} over m_cma instances
     cost_penalty: 0.0                   # no explicit length/cost penalty (bounded by 4096 x K)
