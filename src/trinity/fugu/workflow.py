@@ -30,6 +30,7 @@ from __future__ import annotations
 import ast
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 from trinity.roles import postprocess as _pp
 from trinity.types import Role, Task
@@ -391,7 +392,9 @@ async def _worker_call(
 ) -> tuple[str, int, int]:
     """Call one worker; return ``(raw_text, prompt_tokens, completion_tokens)``."""
     messages = _worker_messages(task, subtask, context)
-    kwargs = dict(temperature=temperature, max_tokens=max_tokens)
+    # Heterogeneous by construction: a float, an int, a reasoning string, and an
+    # httpx client all travel to `pool.chat` in one bag.
+    kwargs: dict[str, Any] = dict(temperature=temperature, max_tokens=max_tokens)
     if reasoning is not None:
         kwargs["reasoning"] = reasoning
     if client is not None:
@@ -468,7 +471,10 @@ async def run_workflow(
             ptoks += p_pt
             ctoks += p_ct
             n_calls += 1  # the recursive proposal call
-            if ok:
+            # `parse_workflow` returns `(None, False)` on every failure path, so
+            # `ok` already implies a workflow -- but say so explicitly, since the
+            # correlation between the two return values is invisible to a checker.
+            if ok and sub_wf is not None:
                 sub_run = await run_workflow(
                     sub_wf,
                     sub_task,
@@ -562,7 +568,10 @@ async def propose_and_run(
     )
     p_pt = getattr(prop, "prompt_tokens", 0)
     p_ct = getattr(prop, "completion_tokens", 0)
-    if not ok:
+    # `parse_workflow` returns `(None, False)` on every failure path, so `not ok`
+    # already implies `wf is None` -- but the `wf is None` arm makes the invariant
+    # explicit and lets a checker narrow `wf` to `Workflow` below.
+    if not ok or wf is None:
         return WorkflowRun(
             workflow=None, parsed_ok=False, steps=[], final_answer="",
             raw_proposal=prop.text, n_llm_calls=1,

@@ -26,7 +26,7 @@ sys.modules["build_benchmark"] = build_benchmark
 _spec.loader.exec_module(build_benchmark)
 
 from trinity.roles.prompts import WORKER_SYSTEM, build_messages  # noqa: E402
-from trinity.types import Role  # noqa: E402
+from trinity.types import Role, Task  # noqa: E402
 
 
 class _StubResult:
@@ -45,8 +45,28 @@ class _RecordingPool:
         return _StubResult(f"answer-from-{model}")
 
 
+def _pairs(items):
+    """Wrap raw items as the ``(task, item)`` pairs ``_cache_answers`` now takes.
+
+    The caching path resolves each item's benchmark adapter and renders the prompt
+    with ``adapter.build_prompt(task)``, so the task carries the question text.
+    """
+    return [
+        (
+            Task(
+                task_id=str(item["question_id"]),
+                benchmark="math500",
+                prompt=item["question_text"],
+                answer="",
+            ),
+            item,
+        )
+        for item in items
+    ]
+
+
 def _run(items, pool, models):
-    asyncio.run(build_benchmark._cache_answers(items, pool, models))
+    asyncio.run(build_benchmark._cache_answers(_pairs(items), pool, models))
 
 
 def test_cache_uses_worker_role_messages():

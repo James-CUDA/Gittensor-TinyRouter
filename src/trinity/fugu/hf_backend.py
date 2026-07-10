@@ -62,11 +62,15 @@ class HFPolicyBackend:
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.model_name, trust_remote_code=True)
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.model = AutoModelForCausalLM.from_pretrained(
+        # `PreTrainedModel.to` is typed through an overloaded wrapper that a checker
+        # cannot resolve for a `torch.device` argument; bind through `Any` rather than
+        # silencing the call site.
+        model: Any = AutoModelForCausalLM.from_pretrained(
             cfg.model_name,
             torch_dtype=self.dtype,
             trust_remote_code=True,
-        ).to(self.device)
+        )
+        self.model = model.to(self.device)
         self.model.train()
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay
@@ -124,7 +128,9 @@ class HFPolicyBackend:
 
         prompt_len = int(input_ids.shape[1])
         gen_ids = out[0, prompt_len:]
-        text = self.tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
+        # `decode` is typed `str | list[str]` (it batches); a 1-D `gen_ids` always
+        # yields a single string.
+        text = str(self.tokenizer.decode(gen_ids, skip_special_tokens=True)).strip()
         text = f"{self.cfg.proposal_prefix}{text}".strip()
         return Proposal(
             text=text,

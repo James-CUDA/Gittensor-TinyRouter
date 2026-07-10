@@ -18,6 +18,22 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-07-10 — CI was red on `main` the moment it landed  #mistake #gotcha #decision
+**Context:** every open PR showed a failing required check. Checked whether the PRs were at fault.
+**Expected:** `main` is green, so a red PR check means the PR broke something.
+**Actual:** `main` itself was red at `cf9da4d`, on two of the three CI steps. A contributor could not distinguish "I broke CI" from "CI was already broken".
+- **Mypy: 11 errors in 8 files.** `ci.yml` (#51) landed *after* the code it gates, so the step went straight to red on its first run. Nothing regressed; the errors became visible.
+- **Pytest: 2 failures.** `tests/test_build_benchmark_cache_prompt.py` (added by #54) still called `_cache_answers(items, ...)`, but #62 changed the signature to `_cache_answers(task_item_pairs, ...)` so the adapter registry could render each prompt. `ValueError: too many values to unpack (expected 2)`. The production caller passes pairs correctly — only the test was stale.
+**Root cause:** three landings in quick succession, each green in isolation. #51 introduced the gate, #54 added a test against one signature, #62 changed that signature. No single PR was wrong; the gate simply had nothing enforcing it before it existed.
+**Fix / decision:** get `mypy src/ scripts/repo_governance/` to zero and repair the stale test, as one "make the gate green" change with no behavioural content. The mypy errors fell into three groups:
+1. **Heterogeneous `kwargs` dicts** (`session.py`, `workflow.py`) — `dict(temperature=..., max_tokens=...)` infers `dict[str, float]`, then a `str` or a client object is assigned in. Annotated `dict[str, Any]`.
+2. **Redundant `type: ignore` comments** (4 lazy imports) — `ignore_missing_imports = true` already covers a box without `datasets`/`cma`, and CI installs them, so `warn_unused_ignores` flagged the guards. Removed.
+3. **Real narrowing gaps** — `parse_workflow` returns `Workflow | None` alongside an `ok` flag, and `ok` reaching `run_workflow` does not prove the workflow is non-`None` *to a checker*. Made the invariant explicit (`if ok and wf is not None` / `if not ok or wf is None`). Plus two `transformers` `.to()` call-sites and a `decode() -> str | list[str]` union, bound through `Any` / `str()` rather than silenced with an ignore.
+**Important correction:** I first read group 3 as a latent `AttributeError`. It is not. Every failure path in `parse_workflow` returns `(None, False)`, so `ok` **does** imply a workflow at runtime. The guards are there to make an invariant the checker cannot see explicit — a readability and type-safety fix, not a bug fix. Worth stating plainly so nobody "fixes" a runtime bug that was never there.
+**Follow-up:** the gate now enforces itself. Separately, the `govern` job still fails on every fork PR (403 on the labels API, since `pull_request` grants a read-only token to forks) — that is a workflow-permissions decision for the maintainer, tracked apart from this.
+
+---
+
 ## 2026-07-10 — Duplicate-detection gate (Gate 3) defeated by re-rolling SVF scales  #mistake #finding #decision
 
 **Context:** auditing the anti-cheat gates in `scripts/pr_eval.py`. Gate 3
