@@ -37,21 +37,36 @@ def _estimate_cost() -> float:
     ledger_path = os.environ.get("TRINITY_COST_LEDGER")
     if not ledger_path:
         return 0.0
-    try:
-        from trinity.llm.cost_ledger import read_ledger_entries, verify_ledger_chain
+    from trinity.llm.openrouter_pricing import verified_ledger_total_usd
 
-        valid, _, _ = verify_ledger_chain(ledger_path)
-        if not valid:
-            return 0.0
+    total = verified_ledger_total_usd(ledger_path)
+    return round(total, 4) if total is not None else 0.0
 
-        total = 0.0
-        pricing = {"qwen3.5-35b-a3b": 0.90, "minimax-m3": 0.90, "deepseek-v4-flash": 0.90}
-        for entry in read_ledger_entries(ledger_path):
-            price = pricing.get(entry.model, 0.90)
-            total += price * entry.total_tokens / 1_000_000
-        return round(total, 4)
-    except Exception:
-        return 0.0
+
+def _resolve_seed(summary: dict) -> int | None:
+    """Recover the training seed from a run summary, or ``None`` if unrecorded.
+
+    Runs packed before issue #109 have no ``seed`` key. Report those as ``None``
+    rather than defaulting to ``0``: a real ``--seed 0`` run is a different claim
+    from "the seed was never recorded", and pycma historically read seed ``0`` as
+    "seed from the wall clock" (issue #38).
+
+    Args:
+        summary: Parsed ``summary.json`` for the run, possibly empty.
+
+    Returns:
+        The recorded seed, or ``None`` when the run predates seed recording.
+    """
+    seed = summary.get("seed")
+    if seed is None:
+        print(
+            "WARNING: summary.json has no 'seed' — this run predates seed recording "
+            "(issue #109). Recording seed=null; the fitness curve cannot be re-derived. "
+            "Re-run training to produce a receipt with full provenance.",
+            file=sys.stderr,
+        )
+        return None
+    return int(seed)
 
 
 def build_receipt(run_dir: Path, benchmark: str) -> dict:
@@ -73,7 +88,7 @@ def build_receipt(run_dir: Path, benchmark: str) -> dict:
             for h in history
         ],
         "total_cost_usd": _estimate_cost(),
-        "seed": summary.get("seed", 0),
+        "seed": _resolve_seed(summary),
         "packed_at": int(time.time()),
     }
 
