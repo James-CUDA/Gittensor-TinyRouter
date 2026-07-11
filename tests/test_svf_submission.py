@@ -50,35 +50,36 @@ def test_extract_head_and_svf_from_theta(tmp_path):
 def test_evaluate_cached_uses_policy_svf():
     """Cached pr_eval must route via policy.decide (encoder + SVF + head)."""
     from pr_eval import _evaluate_cached
+    from trinity.orchestration.session import routing_transcript
 
     class _FakePolicy:
         def __init__(self):
             self.calls = 0
 
-        def decide(self, prompt, *, sample=False):
+        def decide(self, transcript, *, sample=False):
             self.calls += 1
             assert sample is False
-            # `_evaluate_cached` passes `routing_transcript(query)` (which prepends
-            # "QUERY:\n"), not the bare query, so route on the query CONTENT rather
-            # than the transcript's length: item "abc" -> deepseek (idx 0), the
-            # shorter "ab" item -> glm (idx 1). Both land on their correct answer.
-            return (0 if "abc" in prompt else 1, None)
+            return (1 if len(transcript) % 2 == 0 else 0, None)
 
     policy = _FakePolicy()
+    # Pick prompt lengths so routing_transcript parity selects the right model.
+    # len("QUERY:\n" + q) is even when len(q) is odd, and vice versa.
     items = [
         {
-            "question_text": "ab",
+            "question_text": "a",
             "benchmark": "math500",
             "correct_answer": "42",
             "model_answers": {"deepseek-v4-pro": "wrong", "glm-5p2": "\\boxed{42}"},
         },
         {
-            "question_text": "abc",
+            "question_text": "ab",
             "benchmark": "math500",
             "correct_answer": "7",
             "model_answers": {"deepseek-v4-pro": "\\boxed{7}", "glm-5p2": "wrong"},
         },
     ]
+    assert len(routing_transcript("a")) % 2 == 0
+    assert len(routing_transcript("ab")) % 2 == 1
     acc = _evaluate_cached(policy, items, ["deepseek-v4-pro", "glm-5p2", "kimi-k2p6"])
     assert acc == 1.0
     assert policy.calls == 2

@@ -216,8 +216,6 @@ def test_parse_lcb_tests_from_json_string():
 def test_parse_lcb_tests_from_list_with_alt_keys():
     row = {"tests": [{"stdin": "x", "expected_output": "y"}]}
     assert loaders._parse_lcb_tests(row) == [{"input": "x", "output": "y", "testtype": ""}]
-
-
 def test_parse_lcb_tests_preserves_testtype():
     # The parser records the testtype (stdin vs functional) so the reward checker
     # can call the entry point for LeetCode-style problems.
