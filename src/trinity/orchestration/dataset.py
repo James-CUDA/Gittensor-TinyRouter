@@ -102,3 +102,53 @@ def sample_minibatch(
         return rng.sample(tasks, m)
     # Not enough distinct tasks (toy set): sample with replacement.
     return [rng.choice(tasks) for _ in range(m)]
+
+
+def split_train_val(
+    tasks: list[Task],
+    val_fraction: float,
+    rng: random.Random,
+) -> tuple[list[Task], list[Task]]:
+    """Partition ``tasks`` into disjoint ``(train, validation)`` pools (issue #172).
+
+    ``val_fraction`` in ``[0, 1)`` is the share held out for validation-based model
+    selection. The split is a deterministic shuffle driven by the caller-owned
+    ``rng`` (seed it from ``--seed`` for reproducibility), so the validation pool
+    never overlaps the training pool and is stable across runs.
+
+    ``val_fraction <= 0`` returns ``(list(tasks), [])`` unchanged — the legacy
+    no-holdout behavior. At least one task is always kept for training; when a
+    positive ``val_fraction`` rounds to zero on a small set it holds out a single
+    validation task.
+
+    Parameters
+    ----------
+    tasks:
+        The full training pool from :func:`load_tasks`.
+    val_fraction:
+        Fraction to hold out for validation, in ``[0, 1)``.
+    rng:
+        Caller-owned :class:`random.Random` for a reproducible split.
+
+    Returns
+    -------
+    tuple[list[Task], list[Task]]
+        ``(train_tasks, val_tasks)``, disjoint. ``val_tasks`` is empty when
+        ``val_fraction <= 0`` or fewer than 2 tasks are available.
+
+    Raises
+    ------
+    ValueError
+        If ``val_fraction`` is not in ``[0, 1)``.
+    """
+    if val_fraction <= 0.0:
+        return list(tasks), []
+    if val_fraction >= 1.0:
+        raise ValueError(f"val_fraction must be in [0, 1), got {val_fraction}")
+    n = len(tasks)
+    if n < 2:
+        return list(tasks), []
+    n_val = max(1, min(int(round(n * val_fraction)), n - 1))
+    shuffled = list(tasks)
+    rng.shuffle(shuffled)
+    return shuffled[n_val:], shuffled[:n_val]
