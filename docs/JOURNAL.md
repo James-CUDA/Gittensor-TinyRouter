@@ -18,32 +18,446 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
-## 2026-07-09 — Hosted pool switched from Fireworks to OpenRouter-only  #decision #finding
-**Context:** the repo had drifted: current roadmap/competition planning had already moved to the `qwen3.5-35b-a3b` / `minimax-m3` / `deepseek-v4-flash` pool, but the runnable code, scripts, and environment contract still assumed Fireworks plus `FIREWORKS_API_KEY`.
-**Expected:** one hosted-provider path, one API key contract, one default model pool, and pricing/config docs that all agree.
-**Actual:** migrated the live client/config path to OpenRouter-only, added `trinity.llm.openrouter_client`, switched the default pool in `configs/models.yaml`, updated remote scripts to require `OPENROUTER_API_KEY`, updated active train/eval/smoke entrypoints, and refreshed default pricing tables to the OpenRouter list prices for the new pool.
-**Root cause:** repository planning evolved faster than the implementation layer, leaving a split-brain state between docs and executable code.
-**Fix / decision:** OpenRouter is now the only supported hosted-model provider in the live path. A small `fireworks_client.py` import shim remains only for backward compatibility with stale local scripts, but it aliases the OpenRouter client and no longer introduces a second provider contract.
-**Follow-up:** historical notes/results that explicitly describe prior Fireworks runs are preserved as historical records; only the live operational path was migrated.
+## 2026-07-11 — Novelty scored identical heads as maximally novel after a JSON round-trip  #mistake #decision
 
-## 2026-07-09 — Roadmap realigned to the SN74 three-benchmark competition plan  #decision
-**Context:** after reframing the README around the SN74 competition loop, `ROADMAP.md` was still describing the old math500/MMLU competition shape and did not reflect the new target benchmarks or the staged TRINITY-then-Conductor plan.
-**Expected:** the roadmap should describe the current competition objective, frozen-protocol requirements, benchmark-adapter work, oracle-headroom gate, shared-head training path, miner PR flow, and the later benchmark/model-pool expansion path.
-**Actual:** rewrote `ROADMAP.md` around the current 3-benchmark target (`SWE-bench Verified`, `LiveCodeBench v6`, `MMLU-Pro`), the current 3-model pool, Phase 0 protocol freeze, Phase 1 adapters, Phase 2 oracle analysis, Phase 3 shared TRINITY head on RTX 5090, Phase 4 miner competition loop, and Phase 5 Conductor on H100.
-**Root cause:** the old roadmap had become historically stale: it still reflected the earlier math500/MMLU competition framing rather than the intended SN74-style multi-benchmark competition.
-**Fix / decision:** align the roadmap with the new README and use it as the canonical phase plan for the competition front door. Keep detailed implementation decisions in `AGENTS.md` and `docs/SPEC.md`.
-**Follow-up:** once the protocol file, benchmark manifests, and submission artifact contract exist, link them from the roadmap so the phases point to concrete deliverables rather than just headings.
+**Context:** reading `novelty.normalize_decision` in the new novelty/routing-diversity analysis
+(issue #164).
+**Expected:** a routing decision persisted to JSON and reloaded compares equal to the live
+`(agent, role)` tuple — the function's docstring says the key "round-trips through JSON."
+**Actual:** it didn't. A normalized tuple key serialized to JSON reloads as a **list** (JSON has no
+tuple type), and `normalize_decision` only branched on `tuple` — a list fell through to
+`str([...])`, a different key. Two identical heads (one live tuples, one JSON-loaded lists) scored
+0.0 agreement / **1.0 novelty**.
+**Root cause:** `isinstance(decision, tuple)` misses the `list` shape that every pair takes after a
+JSON round-trip, so the element-wise enum→name normalization never ran and the whole list was
+stringified.
+**Fix / decision:** branch on `(tuple, list)` and normalize element-wise to a tuple, so a
+JSON-loaded `[0, "WORKER"]` becomes `(0, "WORKER")` and matches the live tuple. `[OUR CHOICE]`
+always return a tuple key (not a list) so the key stays hashable and stable across the round-trip.
+Novelty is 5% of the composite score and the reference is the king's persisted decisions, so a
+head that routes identically to the king was being handed full novelty credit it did not earn.
+**Follow-up:** the `reference is None` branch of `novelty_report` still returns `n_agree=0`
+alongside `agreement_rate=0.5`, which is internally inconsistent for any JSON consumer that
+recomputes agreement from `n_agree/n_questions`; harmless to the scalar novelty but worth
+tidying separately.
+
+## 2026-07-10 — Rate-limit gate self-rejected a re-run of the same PR  #mistake #decision
+
+**Context:** reading the anti-cheat Gate 1 (`submission/gates.check_rate_limit`, called by
+`scripts/pr_eval.py`) after the submission-gate extraction (issue #144).
+**Expected:** the maintainer can re-run `pr_eval` on a PR (a CI retry, or after a transient
+GPU/API failure during live scoring) without it counting as a second submission.
+**Actual:** `_record_attempt` consumes the weekly slot the moment Gate 1 passes ("so rejected
+attempts still count — miners can't probe weekly"). On a re-run, `check_rate_limit` counted that
+already-recorded attempt for the SAME PR (recent = 1 >= max 1) and rejected the PR as
+`rate_limited`. A transient infra failure permanently burned a legitimate miner's slot AND
+bounced their submission.
+**Root cause:** `check_rate_limit` counted every attempt by the miner in the window with no
+notion of "the PR currently under evaluation", even though each attempt already records its `pr`.
+**Fix / decision:** thread the current PR number into `check_rate_limit` and skip attempts whose
+`pr` equals it — a re-eval of one PR no longer counts against itself, while a DISTINCT PR still
+does (anti-probe intent preserved). `_record_attempt` is now idempotent per PR so re-runs don't
+bloat the ledger either. `[OUR CHOICE]` an attempt with no recorded `pr` still counts (it can't be
+proven to be the same PR); `current_pr=None` (local preflight, no PR yet) preserves the old
+count-everything behaviour so a miner sees their true status.
+**Follow-up:** the slot is still consumed on the *first* Gate-1 pass regardless of whether live
+eval ever completes; if an eval reliably dies before producing a score, that PR's slot is spent
+until it either succeeds on re-run or the week rolls over. Acceptable given the anti-probe goal,
+but worth revisiting if infra flakiness makes it common.
+
+## 2026-07-10 — Preflight gates 1–5 did not catch receipt schema drift or theta layout corruption  #finding #decision
+**Context:** extending ``trinity.submission`` after #104 merged the offline preflight CLI.
+**Expected:** miners discover wrong ``receipt.json`` benchmark fields or hand-edited
+weight packs before opening a PR.
+**Actual:** gates 1–5 checked rate limits, weight magnitudes, duplicates, receipt
+plausibility, and ledger/receipt cost — but not whether the receipt's
+``benchmark`` / ``pool_models`` / ``n_total`` matched the submission context, or
+whether ``head_weights.npy`` + ``svf_scales.npy`` round-tripped through the
+canonical ``coordinator.params`` θ layout.
+**Fix / decision:** add gate 6 (``pack_schema``) and gate 7 (``theta_integrity``)
+in ``trinity.submission.schema``, wire them into ``OFFLINE_GATES``,
+``scripts/preflight_submission.py``, and ``scripts/pr_eval.py`` before any GPU
+work. Document the seven-gate flow in ``SUBMITTING.md``. Covered by
+``tests/test_submission_schema.py``.
+**Follow-up:** none.
+
+## 2026-07-10 — The hidden-benchmark build accepted toy data, then died pointing elsewhere  #mistake #gotcha #repro
+**Context:** #73 fixed MMLU's `train` split and wired `ToyFallbackWarning` into `load_split`. Checking what the *hidden-benchmark builder* does when that warning fires.
+**Expected:** `build_benchmark.py` refuses to seal a benchmark whose questions came from the 2-item offline toy set.
+**Actual:** it accepts them. `protocol.sample_pool` draws from the `"train"` split, so with `datasets` unavailable (offline box, or the gated `Idavidrein/gpqa`) the pool is the toy set. A warning is emitted — and warnings do not stop anything. The build then dies much later, in `select_splits`:
+```
+_sample_pool('mmlu')  -> 2 tasks  (ToyFallbackWarning emitted)
+select_splits         -> ValueError: pool has 2 tasks but the protocol needs 220 (eval=150, audit=50, live=20)
+```
+That error names neither the toy fallback nor the split that failed to load. Someone reading it would go hunting in `benchmark_protocol.py`, which is entirely innocent.
+**Root cause:** the loaders correctly *report* the substitution, but the only consumer for whom toy data is categorically unacceptable — the sealed, integrity-hashed hidden benchmark — never listened. `select_splits`' size check caught it by accident, one stage too late, because 2 < 220. A benchmark whose toy set happened to exceed the protocol's counts would have been sealed and hashed as real data with nothing but a warning on stderr.
+**Fix / decision:** escalate `ToyFallbackWarning` to an error inside `_sample_pool` (`warnings.simplefilter("error", ToyFallbackWarning)`), and re-raise it as a `RuntimeError` that names the benchmark, quotes the original warning, and states the remedy. The original warning is preserved as `__cause__` rather than swallowed. Chose this over threading an `allow_toy_fallback=False` flag up through `BenchmarkAdapter.load_tasks`: escalating the warning reuses the signal #73 already added, changes no interface, and cannot be forgotten by the next adapter — any loader that warns is covered for free.
+**Follow-up:** `trinity.train` has the same exposure — training on 2 toy questions produces a normal-looking receipt — but it goes through `load_tasks` rather than `_sample_pool`, so it needs its own decision about whether an offline smoke run should stay permitted. Deliberately out of scope here.
+## 2026-07-11 — Audit random-routing baseline was non-reproducible (shared rng under asyncio.gather)  #mistake #finding #decision
+
+**Context:** `scripts/audit_eval.py` is the SEALED, run-once "honest, ungameable"
+number. Its random-routing baseline averages 100 seeds; each seed fans all tasks
+out through `asyncio.gather`.
+**Expected:** a fixed seed → a byte-reproducible `random_routing` score.
+**Actual:** it wasn't. `_RandomAuditPolicy` held one shared `self.rng` and every
+concurrently-gathered trajectory drew from it, so turn-2+ routing draws were
+consumed in **network-completion order**, not seed order — the exact bug
+`trinity.eval.RandomPolicy` was already fixed for (via `task_rng(seed, task_id)`),
+but the audit script kept the old shared-rng form.
+**Root cause:** `decide` used `self.rng` and ignored the per-trajectory `rng`
+`run_trajectory` passes through; the audit loop never supplied one.
+**Fix / decision:** mirror `trinity.eval` — `decide` draws from the passed `rng`
+(instance rng only as a fallback), and the loop passes `rng=task_rng(seed_s,
+t.task_id)` per trajectory. Covered by `tests/test_audit_random_routing_seed.py`.
+**Follow-up:** the audit "held-out" guarantee is soft (samples train w/ a diff seed,
+not a provably-disjoint partition) — a larger, separate change.
+
+## 2026-07-10 — Miners had no offline path to run pr_eval gates before opening a PR  #finding #decision
+**Context:** routing-head submissions were rejected only after opening a PR, when
+``scripts/pr_eval.py`` ran gates 1–4 embedded in an 850-line maintainer script.
+**Expected:** the same anti-cheat checks (rate limit, weights, duplicate head,
+receipt plausibility) runnable locally with no GPU and no OpenRouter spend.
+**Actual:** gate logic was not importable; miners discovered failures post-PR. A
+fifth gap also existed: ``receipt.json`` ``total_cost_usd`` was never
+cross-checked against a verified ``TRINITY_COST_LEDGER`` total, so fabricated
+receipts could disagree with the append-only ledger.
+**Fix / decision:** add ``trinity.submission`` (pack loader, gate classes,
+``PreflightRunner``) plus ``scripts/preflight_submission.py`` for miners.
+``pr_eval.py`` now imports the shared gates and runs gate 5
+(ledger/receipt cost consistency) before any GPU work. Shared OpenRouter pricing
+lives in ``trinity.llm.openrouter_pricing`` so ``cost_report.py``,
+``pack_submission.py``, and the new gate agree on dollar totals. Covered by
+``tests/test_submission_preflight.py``.
+**Follow-up:** wire the preflight CLI into CONTRIBUTING/SUBMITTING docs when the
+maintainer is ready to advertise it.
+
+## 2026-07-10 — A null `usage` block crashed a successful inference call  #mistake #gotcha
+**Context:** hardening `llm/openrouter_client.py` after #72 fixed the `content: null` case, to see whether the same present-but-null trap existed elsewhere in the response parsing.
+**Expected:** a 200-OK response with `"usage": null` records zero tokens and returns the completion.
+**Actual:** `usage = data.get("usage", {})` returns `None` (the `{}` default only applies to an *absent* key, not a present-null one), and the next line `usage.get("prompt_tokens", 0)` raises `AttributeError: 'NoneType' object has no attribute 'get'` — on an otherwise-successful call.
+**Root cause:** the identical `dict.get(k, default)` misuse #72 fixed for `content`, one function away, in the token-accounting path — missed because `_message_text` and the usage parse were treated as separate concerns. OpenAI-compatible providers send `"usage": null` for some backends and for 200s with an empty completion.
+**Why it is worse than the `content` case:** `_message_text` returned a wrong *value* ("None"); this *raises*. The `AttributeError` is not in the `_Retryable` set (only 429/5xx and network errors are), and `@retry(..., reraise=True)` re-raises it out of `chat`. With `eval`/`fitness` now gathering `return_exceptions=True`, that exception becomes the trajectory's result and is scored **0.0** — so a model that answered correctly is silently counted as wrong, in both eval and CMA-ES training reward.
+**Fix / decision:** `usage = data.get("usage") or {}` — covers absent and null identically, exactly mirroring the `if content is None` guard #72 added in the same file. One line; no behaviour change for a populated, empty, or absent usage block.
+**Follow-up:** `choice = data["choices"][0]` and `choice["message"]` are still index/`[]` access, so a response with no `choices` would `KeyError`. That is a genuinely malformed response (not a documented provider behaviour like `usage: null`), so I left it — a separate, weaker concern.
+
+## 2026-07-10 — Added an offline view of efficiency and composite-score tradeoffs  #finding #decision
+**Context:** contributors could see hidden/live accuracy, but the competition's 10% efficiency term still lived only inside `scripts/pr_eval.py::_compute_score`, making turn-efficiency tradeoffs hard to inspect offline.
+**Expected:** a miner can estimate the composite score and inspect turns-per-correct-answer without opening a PR or touching the hidden evaluator.
+**Actual:** there was no repo-local utility for that analysis; the formula existed only in the maintainer scorer.
+**Fix / decision:** add `src/trinity/efficiency.py` plus `scripts/efficiency_report.py` as an offline mirror of the current score formula, with per-answer efficiency summaries (`turns_per_correct`, optional calls/cost per correct) and tests that pin the implementation to `pr_eval` when importable.
+**Follow-up:** if the competition scoring formula changes, `pr_eval` and `trinity.efficiency` must be updated together so offline analysis stays aligned with the maintained scorer.
 
 ---
 
-## 2026-07-09 — README reframed to SN74 competition front door  #decision
-**Context:** the repo front page had drifted between an internal TRINITY replication lab notebook and a public-facing competition pitch. We needed a README that matched the intended Gittensor SN74-style miner competition framing while preserving the TRINITY-then-Conductor roadmap.
-**Expected:** a README aligned to subnet competition style would describe the frozen composite benchmark, miner PR flow, verified frontier scoring, current 3-benchmark scope, and staged hardware plan without pretending the repo already implements the full ultimate roadmap.
-**Actual:** rewrote `README.md` around the SN74 competition loop: current benchmark triad (`SWE-bench Verified`, `LiveCodeBench v6`, `MMLU-Pro`), current 3-model pool, proposed eval labels, frozen protocol, miner guide, phased roadmap, and the TRINITY-on-5090 then Conductor-on-H100 plan.
-**Root cause:** the earlier README mixed replication results, competition claims, and aspirational scope in a way that was no longer a clean front door for contributors.
-**Fix / decision:** make the README explicitly competition-first and benchmark-protocol-first, while leaving `AGENTS.md` and `docs/SPEC.md` as the implementation/research source of truth. The README now explains the current competition scope and the long-term expansion path separately.
-**Follow-up:** if the evaluator, packaging flow, or hidden benchmark protocol solidifies further, the README should be tightened again so the submission artifacts and score labels match the actual code rather than the planned interface.
+## 2026-07-10 — The head never read `<Head Input>`; the EOS trick was a no-op  #mistake #gotcha #repro
+**Context:** verifying that `coordinator/slm.py::encode` matches the canonical extraction in SPEC §3.2 before trusting any head trained on it.
+**Expected:** `encode` tokenizes `transcript + "\n<Head Input>"`, appends one EOS, and reads index `-2` — the suffix's final token, a fixed decision position.
+**Actual:** the suffix was never appended. The string `<Head Input>` appeared nowhere in `src/`. `encode` tokenized the bare transcript, appended EOS, and read `-2` — which is the transcript's **last content token**. Its own comment asserted the opposite: *"The last real content token therefore sits at index -2 (the `<Head Input>` position)."* Both cannot be true. Demonstrated with a char-code tokenizer and an echo model:
+```
+before:  transcript ends '2' -> head reads '2'     ends 'x' -> reads 'x'   ends 's' -> reads 's'
+after :  transcript ends '2' -> head reads '>'     ends 'x' -> reads '>'   ends 's' -> reads '>'
+```
+**Root cause:** two changes that each look right in isolation. Appending EOS *does* create a penultimate position — but **attention is causal**, so the hidden state at `-2` cannot attend to the EOS at `-1`. `h[-2]` with an EOS appended is bit-identical to the last content token's state with no EOS at all (pinned by `test_appending_eos_is_a_noop_under_causal_attention`, which builds a minimal causal block and asserts the equality). The EOS append was therefore a **no-op**: it renamed the last content token as "penultimate" without changing which vector the head sees. Only the suffix creates a position whose identity is independent of the transcript.
+**Why it matters:** the head's sole input (SPEC §3.2: *"no pooling, no turn index, no role one-hots"*) was a token that varies with whatever the transcript happened to end on — a code brace, a digit, a period. SPEC §3.2 records the ablation for reading a content token rather than the intended one: **LiveCodeBench 61.46 → 50.85**.
+**Fix / decision:** append `HEAD_INPUT_SUFFIX = "\n<Head Input>"` before tokenizing, and export it as a module constant so train and inference cannot drift. Keep the EOS append and the `-2` read exactly as SPEC prescribes — with the suffix present, `-2` is now the suffix's final token.
+**Consequence to be explicit about:** this changes the coordinator's feature. `encode` is called by both training and evaluation, so the two stay consistent with each other — but any head trained *before* this fix was fitted to the old (last-content-token) feature. Those heads are not comparable to heads trained after it, and the leaderboard's archived `best_theta` files were fitted to the wrong feature. This wants a re-train, exactly as the 2026-06-23 extraction fix did.
+**Follow-up:** the guard `input_ids.shape[1] < 2` can no longer trigger, since the suffix alone tokenizes to several tokens; left in place as a cheap invariant. Worth a follow-up: assert at load time that the tokenizer does not merge the suffix's final `>` into a preceding token for some other checkpoint.
 
+---
+## 2026-07-10 — R1/R2 gave TRINITY 5x the token budget of the baselines it beat  #mistake #gotcha
+**Context:** auditing `trinity/eval.py` against SPEC §1.3 before trusting an R1/R2 verdict.
+**Expected:** the single-model baselines are budget-matched to TRINITY, as SPEC §1.3.4 requires: *"run each single model at `max_tokens = 20,480` (5×) so the single-vs-TRINITY comparison is fair, matching the paper's 5× protocol."* The same 5× appears in the 2026-06-22 SPEC-decisions entry and in SPEC's own R1 row (*"budget-matched 5×"*).
+**Actual:** the baselines got **1×**. `evaluate` passed `max_tokens=args.max_tokens` (default 4096) to `_score_single_model`, which spends it on **one** turn. TRINITY got `run_kwargs = dict(max_turns=5, max_tokens=4096)` — up to 5 turns at 4096 each, i.e. 20,480. So every "TRINITY > best single model" result was produced by a system with five times the token budget of the systems it was compared against.
+**Root cause:** the budget rule lives in `--max-turns`, not in `--max-tokens`, so "give the baseline the same total" requires multiplying the two — and the one place that had to do the multiplication simply forwarded `args.max_tokens` to both paths. Both numbers look right in isolation. Nothing in the code referenced the 5×, so nothing enforced it; the constraint existed only in prose, in two documents.
+**Fix / decision:** add `single_model_budget(max_tokens, max_turns) -> max_tokens * max_turns` and hand its result to the baselines. Derived from `max_turns` rather than hard-coding `5`, so the match survives someone passing `--max-turns 3`; at the defaults it is exactly the 20,480 SPEC names. The routed path is untouched — TRINITY still spends `max_tokens` *per turn*. `evaluate` now prints the matched budget, so a reader of the logs can see the comparison was fair rather than trusting that it was.
+**Why this one stings:** R1/R2 is the paper's headline claim and the repo's reason to exist. The invariant check at the bottom of `evaluate` (`s_trinity > best_single`) was measuring, in part, a budget difference. Every R1/R2 number in this JOURNAL predating this fix was produced under the 1× baseline and should be read with that in mind — including the 2026-06-23 multi-task headline (*"best FIXED single model avg ≈ 0.65 … per-task TRINITY avg ≈ 0.75"*). Re-running eval is cheap (the JOURNAL prices it at ~$1.3); the numbers should be regenerated before any of them are quoted.
+**Follow-up:** `scripts/audit_eval.py` builds its own `single::` baselines and needs the same treatment; `pr_eval.py`'s cached single-turn component is a separate contract (it caches one WORKER turn per question) and is deliberately not changed here.
+
+---
+
+## 2026-07-10 — Verifier verdicts missed when the model wraps them in Markdown  #mistake #finding #decision
+
+**Context:** `roles/verifier.py::parse_verdict` extracts `VERDICT: ACCEPT|REVISE`
+from the Verifier turn; an ACCEPT terminates the trajectory early (SPEC §0.3.5).
+The regex was recently anchored with a trailing `\b` (good — stops `ACCEPTABLE`).
+**Expected:** a verdict still parses when the model emphasises it.
+**Actual:** it did not. Models routinely format the line as `**VERDICT:** ACCEPT`,
+`VERDICT: **ACCEPT**`, or ``VERDICT: `REVISE` ``, and `VERDICT:\s*(ACCEPT|REVISE)`
+requires the colon then only whitespace before the word — so all three returned
+`None`, the loop fail-safed to REVISE, and a correct+complete answer never earned
+the early ACCEPT. That needlessly runs the full turn budget, hurting the
+efficiency term (10% of the competition score) and raising live-eval latency/cost.
+**Root cause:** the separator between `VERDICT` and the verdict word only allowed
+whitespace, not Markdown emphasis / code / dash markers.
+**Fix / decision:** broaden the separator to `[\s:*_`~-]*` and replace the trailing
+`\b` with `(?![A-Za-z])`. The lookahead is needed because `\b` treats an underscore
+as a word char and would reject the italic wrapper `__REVISE__`; the lookahead
+blocks only a trailing *letter*, so the `ACCEPTABLE`/`ACCEPTED`/`REVISED` guard is
+preserved while `**`/`__`/`` ` ``/punctuation are fine. The character class matches
+no letters, so prose ("the verdict is … accept") is still rejected. Covered by new
+cases in `tests/test_verifier.py`.
+**Follow-up:** none.
+
+## 2026-07-10 — results_table multi-task summary crashed on a null system score  #mistake #gotcha
+
+**Context:** `scripts/results_table.py` aggregates `experiments/**/eval*.json` into
+the R1/R2/R4 summary. `load_rows` keeps a row when the `TRINITY` and `single::` keys
+are PRESENT.
+**Expected:** the summary renders for any row set `load_rows` accepts.
+**Actual:** `trin_avg = sum(max(r["trinity"] for r in by_bench[b]) ...)` (and the
+`random` twin) raise `TypeError: ... 'float' and 'NoneType'` when a row has
+`"TRINITY": null` (or lacks `random_routing`) — key present but value `None`. Key
+*presence* was checked; value *nullness* was not, so an older/partially-written
+eval file crashes the whole summary.
+**Root cause:** the per-benchmark reduction assumed every value non-null, unlike the
+per-row table which already guards with `x or 0`.
+**Fix / decision:** add `_bench_best(rows, key)` that maxes over non-null values
+(0.0 if a benchmark has none), and route both `trin_avg`/`rand_avg` through it —
+mirroring the per-row leniency. Covered by a null-score case in
+`tests/test_results_table.py`; the existing reduce-the-same-way tests are unchanged.
+**Follow-up:** none.
+
+## 2026-07-10 — GPQA logical `test` resolved via a deterministic holdout  #finding #decision
+
+**Context:** closing the follow-up left by the MMLU split fix below — "GPQA still has only an
+upstream `train` split; deterministic holdout for logical `test` is separate work" (issue #95).
+**Expected:** `python -m trinity.eval --benchmark gpqa` scores the router on real GPQA-Diamond
+rows that training never saw.
+**Actual:** it scored on **2 toy questions**. `eval.py` asks for split `"test"`; `Idavidrein/gpqa`
+publishes only `train`; `_try_load_hf` swallowed the unknown-split error and `load_split`
+substituted `_toy_tasks("gpqa")`. Training (`split="train"`) loaded the real 198 rows, so train
+and eval were silently running on different data and the R1/R2 verdicts rested on 2 questions.
+**Root cause:** `split_policy._SPLIT_ALIASES` had entries for `mmlu` (#35) and `mmlu_pro` (#50)
+but none for `gpqa`, so the logical split was forwarded verbatim.
+**Fix / decision:** alias both `train` and `test` onto upstream `train`, then partition those rows
+with `split_policy.select_holdout` — a fixed-seed (`HOLDOUT_SEED = 20260710`), 25% holdout keyed on
+upstream row position. `[OUR CHOICE]` a plain `test → train` alias was rejected: it would have
+evaluated on exactly the rows training consumed. The partition is deliberately independent of
+`load_split`'s shuffle `seed`, so the train/test boundary cannot drift when a caller changes
+sampling. 198 rows → 148 train / 50 test, disjoint and covering. The toy fallback skips the
+partition (a 2-item set cannot be divided) and still raises `ToyFallbackWarning`.
+**Follow-up:** `eval.py` treats `ToyFallbackWarning` as non-fatal, so any *other* loader failure
+still reports toy-set numbers as if real. Promoting that warning to an error under `--strict-data`
+would close the class rather than this one instance. GPQA is also a gated HF repo — without auth
+the fallback still fires, now loudly but not fatally.
+
+## 2026-07-10 — Cost-ledger verifier hashed a different JSON string than the writer  #mistake #decision
+**Context:** checking the token-cost ledger path used by training, `cost_report.py`,
+and submission packing.
+**Expected:** a ledger written by `OpenRouterPool._ledger_append` verifies in
+`scripts/cost_report.py --ledger`, and the submission packer prices the same
+entries from the same parsed rows.
+**Actual:** legitimate ledgers failed verification. The writer hashed a fixed,
+compact payload string (`{"m":"...","p":...,"c":...}` in that key order), while
+the verifier rebuilt the payload with `json.dumps(..., sort_keys=True)`, which
+changes the byte string and therefore the hash. `pack_submission.py` then read
+the same file through a separate ad-hoc path, so the write, verify, and summarize
+steps were not sharing one canonical implementation.
+**Root cause:** the hash-chain format existed only implicitly inside the writer.
+Verifiers reimplemented it differently, and nothing enforced one shared payload
+encoding.
+**Fix / decision:** add `trinity.llm.cost_ledger` as the single source of truth
+for payload formatting, chained hashing, line parsing, ledger verification, and
+append helpers. Route `openrouter_client`, `cost_report.py`, and
+`pack_submission.py` through it, and cover the regression with
+`tests/test_cost_ledger.py`.
+**Follow-up:** the append helper writes text-only handles; keeping the test hook
+typed as `TextIO` avoids implying binary support the implementation does not have.
+
+## 2026-07-10 — Rate-limit gate counted wins, not attempts  #mistake #finding #decision
+
+**Context:** follow-up from the UTC timestamp fix on Gate 1 (`_check_rate_limit`).
+`SUBMITTING.md` says "1 submission per benchmark per week".
+**Expected:** any evaluated submission consumes the weekly slot, win or lose.
+**Actual:** `_update_leaderboard` (the only writer into `history`) ran only on
+`score > best_score`. Score-rejections and later gate failures never touched the
+log, so Gate 1 only saw prior *wins*. A miner could lose, immediately resubmit,
+and probe the hidden benchmark without waiting 7 days.
+**Root cause:** rate limit reused the win-only `history` log instead of an
+attempt log.
+**Fix / decision:** record an `attempts` entry as soon as Gate 1 passes (slot
+consumed even if Gate 2+ fails or the score loses). Gate 1 reads `attempts`,
+falling back to legacy `history` when `attempts` is absent. First write seeds
+`attempts` from existing `history` so recent winners stay rate-limited after
+rollout. Covered by `tests/test_pr_eval_rate_limit.py`.
+**Follow-up:** none for this hole.
+
+---
+
+## 2026-07-10 — Passing a price table silently made the Conductor free  #mistake #gotcha
+**Context:** checking the pre-launch projections in `fugu/cost.py` before trusting them to size a paid GRPO run. The module's stated job is to stop us launching a paid job blind.
+**Expected:** `conductor_local=False` + `conductor_model="minimax-m3"` prices the Conductor's generation, whichever way the worker prices were supplied.
+**Actual:** passing `prices=` billed the Conductor **$0**, while the returned `assumptions` still said `conductor_local: False` — an internally self-contradictory estimate.
+```
+prices=None (default table)   conductor_api_usd = 1.5
+prices=dict(PRICES) passed    conductor_api_usd = 0.0     # same config
+assumptions.conductor_local (passed table): False
+```
+**Root cause:** `conductor_local` and `conductor_model` were consumed **only inside `price_table`**. `estimate_grpo_cost` did `table = prices if prices is not None else price_table(...)`, so an explicit table skipped that branch and both knobs were ignored. A worker price table carries no `"<conductor>"` key, so `table.get(CONDUCTOR_KEY, (0.0, 0.0))` returned zeros and the Conductor cost nothing. The rule for *when the Conductor is billed* lived in one function while the *decision to bill it* was taken in another.
+**Fix / decision:** extract that rule into `_conductor_price(lookup, conductor_model, conductor_local)` and call it from both `price_table` and the estimator. An explicit `prices` table stays authoritative for the **worker** models — no caller passes one today, so nothing depends on the old replace-everything semantics — but it no longer disables Conductor pricing: the entry is derived unless the caller supplied `CONDUCTOR_KEY` themselves, and the model's rate resolves against `PRICES` overlaid with the caller's table. The caller's dict is copied, not mutated.
+**Why it mattered:** the prompted-Conductor baseline is exactly the `conductor_local=False` configuration, and it makes one Conductor call per rollout. At the module's own defaults (200 iterations × 4 questions × group size 64 = 51,200 rollouts) the estimate dropped an entire cost component. An under-stating projection is worse than none: this JOURNAL already records runs killed mid-flight on cost ($0.50, $1.59, ~$22 ledgered).
+**Follow-up:** `run_cost` (the *exact*, post-hoc accounting) also takes `prices` and defaults to `price_table()` with a local Conductor. That is correct for its purpose — it prices observed per-model token totals and never looks up `CONDUCTOR_KEY` — but the two functions' `prices` parameters now mean subtly different things, which is worth a docstring note if a third caller appears.
+
+## 2026-07-10 — Math grader false-negatives on LaTeX-grouped thousands (`1{,}000`)  #mistake #finding #decision
+
+**Context:** the math grader (`orchestration/reward.py`) already strips *bare*
+digit-grouping commas (`1,000` -> `1000`). Checking whether MATH-500's other common
+thousands form is handled.
+**Expected:** `\boxed{2{,}048}` grades equal to `2048`.
+**Actual:** it graded **wrong** (score 0.0). MATH-500 frequently writes thousands
+with LaTeX's `{,}` group (which renders as a comma): `\boxed{1{,}000}`,
+`\boxed{2{,}048}`, `\boxed{1{,}234{,}567}`. The braces defeat both halves of the
+grader — `extract_last_number` split `1{,}000` into `1` and `000` (returning
+`000`), and `normalize_math_answer`'s comma-strip only matched a bare comma, so the
+braced form survived and never equalled the plain reference.
+**Root cause:** `{,}` was never normalised to a bare comma, so neither the
+thousands-separator regex nor the comma-strip saw it.
+**Fix / decision:** replace `{,}` -> `,` early in both `extract_last_number` and
+`normalize_math_answer`, so the existing (already-tested) comma handling removes it.
+Additive to the bare-comma logic; a comma-separated *list* (`1,2,3`) and genuinely
+wrong answers stay wrong (no false positives). Covered by
+`tests/test_reward_latex_thousands.py`.
+**Follow-up:** none. (`1\,000` — the `\,` thin-space form — is already handled in
+`normalize_math_answer`'s token strip.)
+
+## 2026-07-10 — `main` went red: cache-prompt test not updated for the `_cache_answers` refactor  #mistake #gotcha
+
+**Context:** two changes landed close together — the cache-prompt fix (which added
+`tests/test_build_benchmark_cache_prompt.py`, asserting `_cache_answers` uses a
+WORKER turn) and the #62 refactor that routes caching through the adapter registry.
+**Expected:** green `main`.
+**Actual:** `pytest` fails 2/2 in `test_build_benchmark_cache_prompt.py`. #62 changed
+`_cache_answers(items, ...)` to `_cache_answers(task_item_pairs, ...)` — it now takes
+`(task, item)` pairs and renders the prompt via `get_adapter(task.benchmark)
+.build_prompt(task)` — but the test still called the old `(items, ...)` signature.
+**Root cause:** the test encoded the *old* call shape; the refactor updated the
+function and its caller but not this test, and with no CI gate the break merged.
+**Fix / decision:** update the test to the `(task, item)` pair API and assert the
+prompt equals `build_messages(Role.WORKER, adapter.build_prompt(task), [])` (still
+pinning the WORKER-turn behaviour, now through the adapter). The `_cache_answers`
+WORKER-turn fix itself is intact after #62; only the test was stale. Full suite
+green again.
+**Follow-up:** the offline PR CI in #52 would have caught this; worth landing.
+
+## 2026-07-10 — govern job 403 on fork PR label write-back  #mistake #decision
+
+**Context:** PR-bot governance (`pr-bot.yml`) from #51; every fork PR failed the
+`govern` check on `ensure_labels.py` (issue #84, part 1). Routing-template false
+positives were fixed separately in #86 (issue #85).
+**Expected:** fork PRs run deterministic analysis even when `GITHUB_TOKEN` cannot
+create labels or post comments.
+**Actual:** `ensure_labels.py` raised on HTTP 403; `run_pr_bot.py` returned exit 1
+when label write-back was rejected.
+**Fix / decision:** treat 403 on label create / PR write-back as a warning (exit 0);
+analysis output is still printed. Routing detection unchanged on `main` (#86).
+**Follow-up:** if labels must be applied to fork PRs automatically, add a minimal
+`pull_request_target` workflow that only calls the labels API.
+
+## 2026-07-10 — Duplicate-detection gate (Gate 3) defeated by re-rolling SVF scales  #mistake #finding #decision
+
+**Context:** auditing the anti-cheat gates in `scripts/pr_eval.py`. Gate 3
+(`_check_duplicate`) enforces "original work" by cosine-comparing a submission
+against every prior one, rejecting matches above `_COPY_THRESHOLD = 0.999`.
+**Expected:** copying another miner's trained routing head should be rejected.
+**Actual:** the gate concatenated the head block (6×1024 = 6144 values) and the
+SVF block (7168 values) into ONE vector and compared that. The SVF singular-value
+scales start at the identity (all 1.0) and move little, so every submission's SVF
+block is near-identical to every other's — and it is the larger block, so it
+dominates the cosine. Repro (numpy): copy a rival's head **verbatim** (head cosine
+1.0) and re-roll only the SVF scales → concatenated cosine ≈ **0.9986 < 0.999**, so
+the copied head **passes**. The SVF block both masks copied heads (false negatives)
+and, when SVF is tight, can push honest distinct heads over the line (false
+positives).
+**Root cause:** mixing a near-constant, higher-dimensional block (SVF) with the
+small discriminative block (the head) into a single cosine — the meaningful signal
+(the head) is a minority of the norm.
+**Fix / decision:** compare the HEAD blocks directly (the head is the trained
+artifact "original work" refers to — it alone drives routing). SVF cosine is still
+computed and reported for context but never masks a copied head. A shape-mismatch
+guard skips non-comparable prior heads. Covered by
+`tests/test_pr_eval_duplicate.py`: the copy-head/re-roll-SVF evasion is now caught,
+exact copies are caught, distinct heads and self pass.
+**Follow-up:** none for this bug. (Adjacent, out of scope: warm-started next-gen
+heads from the same miner are compared against their own prior gens; if incremental
+warm-starts should be allowed, the self-vs-prior-gen policy needs its own decision.)
+
+## 2026-07-10 — The default seed (0) made every CMA-ES run irreproducible  #mistake #gotcha #repro
+**Context:** `sep_cmaes.py` opens with "Thin, **deterministic** wrapper around the `cma` library" and documents `seed` as "RNG seed for reproducible sampling". Checking that claim before relying on it for receipt reproduction.
+**Expected:** `SepCMAES(n, seed=0)` twice in a row samples the same first population.
+**Actual:** it does not. Only *non-zero* seeds are honoured:
+```
+seed=0: identical first population? False   <-- the default everywhere
+seed=1: identical first population? True
+```
+**Root cause:** pycma special-cases the value. `cma.CMAOptions.defaults()["seed"]` documents itself as *"random number seed for `numpy.random`; `None` and `0` equate to `time`, `np.nan` means 'do nothing'"*. So `opts["seed"] = 0` means **seed from the clock**. And `0` was the default at every level: `SepCMAES(seed=0)`, `run(seed=0)`, `trinity.train --seed default=0`, and the class's own usage example on line 72. What hid it is that the *other* consumers of `args.seed` really are deterministic — `load_tasks(seed=...)` and `gen_rng = random.Random(seed*100000 + gen)` — so a re-run draws the same tasks in the same order and only the CMA-ES trajectory silently diverges. It looks reproducible until the fitness curve differs.
+**Fix / decision:** stop forwarding the seed to pycma. Pass `np.nan` (pycma's documented "do nothing") and call `np.random.seed(self.seed)` ourselves, since numpy treats `0` as an ordinary seed. This is behavior-preserving: pycma implements an honoured `seed=k` as exactly `np.random.seed(k)`, verified by a test that reconstructs the reference stream directly from `cma.CMAEvolutionStrategy` — so every previously-working seed keeps its byte-identical stream and archived fitness curves stay reproducible. `0` simply joins them. Rejected the tempting one-liner `seed or 1`, which would silently alias seeds 0 and 1 onto one stream (pinned by `test_zero_and_one_are_not_aliased`). Seeds outside `[0, 2**32-1]` now raise instead of reaching numpy.
+**Follow-up:** the wrapper still seeds the **global** `numpy.random` state — that is unchanged from before (pycma did it too), but it means constructing a `SepCMAES` perturbs unrelated numpy randomness in the process. Isolating it behind a `np.random.Generator` / pycma's `randn` option is worth doing separately. Also relevant to the receipt gate in `pr_eval.py`: a "plausible CMA-ES fitness curve" is only re-derivable now that the default seed is honoured.
+
+## 2026-07-10 — MMLU `train` split resolved via shared split_policy  #finding #decision
+
+**Context:** `load_tasks("mmlu", "train")` silently fell back to the 2-item toy set
+because `cais/mmlu` publishes `auxiliary_train`, not `train` (issue #35).
+**Expected:** training and benchmark builds load real MMLU rows for logical `train`.
+**Actual:** `_try_load_hf` swallowed the unknown-split error; `load_split` substituted
+the toy set with no warning.
+**Root cause:** split name forwarded verbatim; no alias table on the built-in loader path
+(MMLU-Pro already fixed this in `split_policy.py` for its adapter).
+**Fix / decision:** extend `split_policy._SPLIT_ALIASES` with `mmlu: train →
+auxiliary_train`, resolve in `loaders.load_split`, and emit `ToyFallbackWarning` when
+the toy set stands in. Keeps one split-resolution module for all benchmarks.
+**Follow-up:** GPQA still has only an upstream `train` split; deterministic holdout for
+logical `test` is separate work.
+
+## 2026-07-10 — Hidden-benchmark cached answers used a bare prompt, not the WORKER turn  #mistake #finding #decision
+
+**Context:** `scripts/build_benchmark.py::_cache_answers` pre-computes each pool
+model's answer per question; those cached answers back the **70%-weighted**
+single-turn score in `pr_eval._evaluate_cached`.
+**Expected:** cached answers reflect how the pool is actually queried in the
+pipeline the router is trained and live-evaluated on.
+**Actual:** caching sent a bare `[{"role":"user","content": question_text}]`
+message — no role contract. But the single-model baseline
+(`trinity.eval._score_single_model`) and the live pipeline
+(`orchestration.session.run_trajectory`) both query via
+`build_messages(Role.WORKER, prompt, [])`, which prepends the WORKER system
+prompt. So the 70% cached component measured model behaviour on a prompt the
+pipeline never uses, and diverged from the 15% live component (which does use the
+WORKER turn).
+**Root cause:** the caching path bypassed `build_messages`, duplicating the
+message construction with a different (role-less) shape.
+**Fix / decision:** cache via `build_messages(Role.WORKER, question_text, [])`, so
+the cached single-turn answers match the baseline and the live path exactly. The
+integrity hash excludes `model_answers` (`benchmark_protocol._HASHED_ITEM_FIELDS`),
+so this changes only the cached answers on a rebuild, not the sealed question set.
+Covered by `tests/test_build_benchmark_cache_prompt.py` (a stub pool asserts the
+WORKER-role message layout and the skip-already-cached behaviour).
+**Follow-up:** none. Rebuilding a benchmark will refresh cached answers under the
+corrected prompt.
+
+## 2026-07-09 — Rate-limit gate parsed UTC timestamps as local time  #mistake #finding #decision
+
+**Context:** Auditing the anti-cheat gates in `scripts/pr_eval.py`. Gate 1
+(`_check_rate_limit`) enforces "1 submission per benchmark per week" by comparing
+each leaderboard `history` entry's `timestamp` against a 7-day cutoff.
+**Expected:** the 7-day window behaves identically wherever `pr_eval.py` runs.
+**Actual:** timestamps are *written* in UTC (`time.strftime("...Z", time.gmtime())`
+in `_update_leaderboard`) but were *read back* with
+`time.mktime(time.strptime(ts, "...Z"))`. `time.mktime` interprets the struct as
+**local** time, so on a non-UTC host the parsed epoch is skewed by the host's UTC
+offset. Repro on a UTC+9 box: `2026-01-01T00:00:00Z` parsed to an epoch **9 h
+earlier** than the true instant. Near the window boundary this lets a miner east
+of UTC evade the rate limit (their prior submission reads as older than it is).
+**Root cause:** `time.mktime` is the inverse of `time.localtime`, not
+`time.gmtime`. The correct UTC inverse is `calendar.timegm`.
+**Fix / decision:** added `_parse_utc_timestamp()` (uses `calendar.timegm`, returns
+`None` on empty/malformed input) and routed the gate through it, so the window is
+timezone-independent. Covered by `tests/test_pr_eval_rate_limit.py` (asserts the
+true UTC epoch via `datetime(..., tzinfo=utc)`, and — where `time.tzset` exists —
+re-checks under forced non-UTC zones).
+**Follow-up:** none for this bug. (Superseded 2026-07-10: rate limit now
+counts attempts via the `attempts` log, not only approved wins.)
+
+---
 
 ## 2026-06-25 — Constrained decoding fixes parse_rate (1.0), but GRPO has a dead gradient (samples=0)  #repro #finding #decision #gotcha
 

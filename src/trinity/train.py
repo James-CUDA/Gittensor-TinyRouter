@@ -23,9 +23,10 @@ import yaml
 from .coordinator import params as P
 from .coordinator.policy import CoordinatorPolicy
 from .llm.openrouter_client import OpenRouterPool
-from .optim.fitness import FitnessConfig, evaluate_population
+from .optim.fitness import FitnessConfig, evaluate_candidate, evaluate_population
+from .optim.selection import ValidationSelector
 from .optim.sep_cmaes import SepCMAES, default_popsize
-from .orchestration.dataset import load_tasks, sample_minibatch
+from .orchestration.dataset import load_tasks, sample_minibatch, split_train_val
 
 _REPO = Path(__file__).resolve().parents[2]
 
@@ -51,6 +52,52 @@ def _resolve_x0(args, spec) -> np.ndarray:
     print(f"[train] warm-start x0 from {warm} (||head||={np.linalg.norm(theta[:spec.n_head]):.3f}, "
           f"deviates from zero-init by {float(np.linalg.norm(theta - P.initial_theta(spec))):.3f})")
     return theta
+
+
+def build_summary(
+    *,
+    benchmark: str,
+    pool_models: list[str],
+    n_total: int,
+    popsize: int,
+    m_cma: int,
+    generations: int,
+    best_fitness: float,
+    seed: int,
+    run_dir: Path | str,
+) -> dict:
+    """Assemble the ``summary.json`` payload for a finished training run.
+
+    ``seed`` is recorded because it drives every source of randomness in the run
+    — task sampling, the sep-CMA-ES trajectory, and the per-generation RNG — and
+    a submission receipt cannot name the seed behind its fitness curve without it
+    (issue #109).
+
+    Args:
+        benchmark: Benchmark the head was trained on.
+        pool_models: Coordinated LLM pool, in slot order.
+        n_total: Search dimension of the parameter vector.
+        popsize: sep-CMA-ES population size λ.
+        m_cma: Replications per candidate.
+        generations: Generations actually completed.
+        best_fitness: Fitness of the best candidate seen.
+        seed: The run's ``--seed``.
+        run_dir: Directory holding the run artifacts.
+
+    Returns:
+        The summary mapping, JSON-serialisable as written to ``summary.json``.
+    """
+    return {
+        "benchmark": benchmark,
+        "pool": pool_models,
+        "n_total": int(n_total),
+        "popsize": int(popsize),
+        "m_cma": int(m_cma),
+        "generations": int(generations),
+        "best_fitness": float(best_fitness),
+        "seed": int(seed),
+        "run_dir": str(run_dir),
+    }
 
 
 async def train(args) -> dict:
@@ -88,13 +135,30 @@ async def train(args) -> dict:
     )
     print(f"[train] θ dimension n = {spec.n_total} (head {spec.n_head} + SVF {spec.n_svf})")
 
-    tasks = load_tasks(args.benchmark, "train", max_items=args.max_items, seed=args.seed)
-    print(f"[train] loaded {len(tasks)} train tasks")
-
     popsize = args.popsize or sc.get("population_size") or default_popsize(spec.n_total)
     m_cma = args.m_cma or sc.get("m_cma", 16)
     generations = args.generations or sc.get("generations", 60)
     sigma0 = sc.get("sigma0", 0.1)
+
+    # Validation-based model selection (issue #172). Default off (val_fraction=0.0)
+    # -> save es.best() and run all generations, exactly as before.
+    _val_arg = getattr(args, "val_fraction", None)
+    val_fraction = _val_arg if _val_arg is not None else float(sc.get("val_fraction", 0.0))
+    _pat_arg = getattr(args, "patience", None)
+    patience = _pat_arg if _pat_arg is not None else int(sc.get("patience", 0))
+
+    tasks = load_tasks(args.benchmark, "train", max_items=args.max_items, seed=args.seed)
+    print(f"[train] loaded {len(tasks)} train tasks")
+
+    selector: ValidationSelector | None = None
+    val_tasks: list = []
+    if val_fraction > 0.0:
+        # A distinct RNG stream from the per-generation minibatch RNG so the split
+        # is reproducible from --seed without correlating with task sampling.
+        tasks, val_tasks = split_train_val(tasks, val_fraction, random.Random(args.seed * 100003 + 7))
+        selector = ValidationSelector()
+        print(f"[train] validation holdout: {len(val_tasks)} val / {len(tasks)} train "
+              f"(val_fraction={val_fraction}, patience={patience})")
 
     x0 = _resolve_x0(args, spec)
 
@@ -147,6 +211,20 @@ async def train(args) -> dict:
         es.tell(thetas, fits)
 
         best_x, best_f = es.best()
+
+        val_fit: float | None = None
+        if selector is not None:
+            # Score THIS generation's best candidate on the fixed val set with the
+            # eval decision rule (argmax, sample=False) and pure-binary reward
+            # (fitness_cfg=None) so val fitness proxies the hidden-eval accuracy.
+            gen_best_x = thetas[int(np.argmax(fits))]
+            vf, _ = await evaluate_candidate(
+                gen_best_x, spec, policy, pool, pool_models, val_tasks,
+                sample=False, fitness_cfg=None, **run_kwargs,
+            )
+            val_fit = float(vf)
+            selector.update(gen, gen_best_x, val_fit)
+
         rec = {
             "generation": gen,
             "gen_mean_fitness": float(np.mean(fits)),
@@ -154,27 +232,47 @@ async def train(args) -> dict:
             "best_fitness": float(best_f),
             "seconds": round(time.time() - t0, 1),
         }
+        if val_fit is not None:
+            rec["val_fitness"] = val_fit
         history.append(rec)
-        print(f"[gen {gen:3d}] mean={rec['gen_mean_fitness']:.3f} "
-              f"max={rec['gen_max_fitness']:.3f} best={rec['best_fitness']:.3f} "
-              f"({rec['seconds']}s)")
+        line = (f"[gen {gen:3d}] mean={rec['gen_mean_fitness']:.3f} "
+                f"max={rec['gen_max_fitness']:.3f} best={rec['best_fitness']:.3f}")
+        if val_fit is not None:
+            line += f" val={val_fit:.3f}"
+        print(line + f" ({rec['seconds']}s)")
 
-        np.save(run_dir / "best_theta.npy", best_x)
+        # Save the validation-selected theta when a holdout is active, else es.best().
+        save_x = selector.best_theta if (selector is not None and selector.best_theta is not None) else best_x
+        np.save(run_dir / "best_theta.npy", save_x)
         (run_dir / "history.json").write_text(json.dumps(history, indent=2))
         gen += 1
 
-    best_x, best_f = es.best()
+        if selector is not None and selector.should_stop(patience):
+            print(f"[train] early stop: no val improvement for {patience} generation(s) "
+                  f"(best val={selector.best_val_fitness:.3f} @ gen {selector.best_gen})")
+            break
+
+    train_best_x, best_f = es.best()
+    best_x = (selector.best_theta if (selector is not None and selector.best_theta is not None)
+              else train_best_x)
     np.save(run_dir / "best_theta.npy", best_x)
-    summary = {
-        "benchmark": args.benchmark,
-        "pool": pool_models,
-        "n_total": spec.n_total,
-        "popsize": es.popsize,
-        "m_cma": m_cma,
-        "generations": gen,
-        "best_fitness": float(best_f),
-        "run_dir": str(run_dir),
-    }
+    summary = build_summary(
+        benchmark=args.benchmark,
+        pool_models=pool_models,
+        n_total=spec.n_total,
+        popsize=es.popsize,
+        m_cma=m_cma,
+        generations=gen,
+        best_fitness=best_f,
+        seed=args.seed,
+        run_dir=run_dir,
+    )
+    if selector is not None:
+        # ``best_fitness`` stays the TRAIN best (the fitness-curve max the receipt
+        # gate cross-checks); these record which generation the saved theta came
+        # from and its held-out score.
+        summary["selected_generation"] = selector.best_gen
+        summary["val_fitness"] = float(selector.best_val_fitness)
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     print(f"[train] DONE. best_fitness={best_f:.4f}  -> {run_dir}")
     return summary
@@ -192,6 +290,12 @@ def main() -> None:
     ap.add_argument("--generations", type=int, default=0, help="override config T")
     ap.add_argument("--popsize", type=int, default=0, help="override λ")
     ap.add_argument("--m-cma", type=int, default=0, dest="m_cma", help="override replications")
+    ap.add_argument("--val-fraction", type=float, default=None, dest="val_fraction",
+                    help="held-out validation share for model selection (overrides config; "
+                         "0.0 disables, the default)")
+    ap.add_argument("--patience", type=int, default=None,
+                    help="early-stop after this many generations with no val improvement "
+                         "(overrides config; 0 disables)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--run-name", default="run", dest="run_name")
     ap.add_argument("--warmstart-theta", default="", dest="warmstart_theta",

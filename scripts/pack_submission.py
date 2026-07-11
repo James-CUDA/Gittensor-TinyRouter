@@ -21,7 +21,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-import yaml
 
 _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO / "src"))
@@ -37,32 +36,36 @@ def _estimate_cost() -> float:
     ledger_path = os.environ.get("TRINITY_COST_LEDGER")
     if not ledger_path:
         return 0.0
-    try:
-        import hashlib
-        total = 0.0
-        pricing = {"qwen3.5-35b-a3b": 0.90, "minimax-m3": 0.90, "deepseek-v4-flash": 0.90}
-        prev_hash = ""
-        with open(ledger_path) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                rec = json.loads(line)
-                # Verify hash chain (skip if hash field missing — pre-chain entries)
-                expected_h = rec.pop("h", None)
-                payload = json.dumps(rec, sort_keys=True)
-                if expected_h is not None:
-                    computed_h = hashlib.sha256((prev_hash + payload).encode()).hexdigest()
-                    if computed_h == expected_h:
-                        prev_hash = computed_h
-                m = rec.get("m", "")
-                price = pricing.get(m, 0.90)
-                pt = rec.get("p", 0)
-                ct = rec.get("c", 0)
-                total += price * (pt + ct) / 1_000_000
-        return round(total, 4)
-    except Exception:
-        return 0.0
+    from trinity.llm.openrouter_pricing import verified_ledger_total_usd
+
+    total = verified_ledger_total_usd(ledger_path)
+    return round(total, 4) if total is not None else 0.0
+
+
+def _resolve_seed(summary: dict) -> int | None:
+    """Recover the training seed from a run summary, or ``None`` if unrecorded.
+
+    Runs packed before issue #109 have no ``seed`` key. Report those as ``None``
+    rather than defaulting to ``0``: a real ``--seed 0`` run is a different claim
+    from "the seed was never recorded", and pycma historically read seed ``0`` as
+    "seed from the wall clock" (issue #38).
+
+    Args:
+        summary: Parsed ``summary.json`` for the run, possibly empty.
+
+    Returns:
+        The recorded seed, or ``None`` when the run predates seed recording.
+    """
+    seed = summary.get("seed")
+    if seed is None:
+        print(
+            "WARNING: summary.json has no 'seed' — this run predates seed recording "
+            "(issue #109). Recording seed=null; the fitness curve cannot be re-derived. "
+            "Re-run training to produce a receipt with full provenance.",
+            file=sys.stderr,
+        )
+        return None
+    return int(seed)
 
 
 def build_receipt(run_dir: Path, benchmark: str) -> dict:
@@ -84,51 +87,26 @@ def build_receipt(run_dir: Path, benchmark: str) -> dict:
             for h in history
         ],
         "total_cost_usd": _estimate_cost(),
-        "seed": summary.get("seed", 0),
+        "seed": _resolve_seed(summary),
         "packed_at": int(time.time()),
     }
 
 
 def extract_head_and_svf(run_dir: Path) -> tuple[np.ndarray, np.ndarray]:
-    """Load the coordinator, install best theta, extract head + SVF."""
-    from trinity.coordinator.policy import CoordinatorPolicy
+    """Extract head weights + SVF scales from best_theta.npy via θ unpack."""
     from trinity.coordinator import params as P
 
-    cfg = yaml.safe_load((_REPO / "configs" / "trinity.yaml").read_text())
-    cc = cfg["coordinator"]
-
-    print("Loading encoder on GPU (this may take a moment)...")
-    policy, spec = CoordinatorPolicy.build(
-        model_name=cc["encoder_model"],
-        device=cc.get("device", "cuda:0"),
-        dtype=cc.get("dtype", "bfloat16"),
-        target_layer=cc["svf"]["target_layer"],
-        svf_matrices=cc["svf"].get("matrices"),
-        n_models=3,
-        n_roles=3,
-        l2_normalize=cc["hidden_state"].get("l2_normalize", True),
-    )
+    spec = P.make_spec(n_a=6, d_h=1024, n_svf=P.DEFAULT_N_SVF)
 
     theta_path = run_dir / "best_theta.npy"
     if not theta_path.exists():
-        # Try without .npy extension patterns
         candidates = sorted(run_dir.glob("best_theta*"))
         if not candidates:
             raise FileNotFoundError(f"No best_theta found in {run_dir}")
         theta_path = candidates[-1]
 
     theta = np.load(str(theta_path))
-    policy.configure(theta, spec)
-
-    # Extract head weight from the LinearHead module
-    head_W = policy.head.weight.detach().cpu().float().numpy()
-
-    # Extract SVF scales
-    try:
-        svf_scales = policy.svf.current_scales()
-    except AttributeError:
-        svf_scales = np.ones(spec.n_svf, dtype=np.float32)
-
+    head_W, svf_scales = P.unpack(theta, spec)
     return head_W.astype(np.float32), svf_scales.astype(np.float32)
 
 

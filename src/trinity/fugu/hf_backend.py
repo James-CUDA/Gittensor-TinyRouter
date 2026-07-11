@@ -62,11 +62,14 @@ class HFPolicyBackend:
         self.tokenizer = AutoTokenizer.from_pretrained(cfg.model_name, trust_remote_code=True)
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.model = AutoModelForCausalLM.from_pretrained(
+        # `from_pretrained` is a decorated classmethod, so its return type does not
+        # carry `.to`; bind through Any rather than chaining off the call.
+        model: Any = AutoModelForCausalLM.from_pretrained(
             cfg.model_name,
             torch_dtype=self.dtype,
             trust_remote_code=True,
-        ).to(self.device)
+        )
+        self.model = model.to(self.device)
         self.model.train()
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay
@@ -124,7 +127,8 @@ class HFPolicyBackend:
 
         prompt_len = int(input_ids.shape[1])
         gen_ids = out[0, prompt_len:]
-        text = self.tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
+        # decode() is typed `str | list[str]`; a single sequence always yields str.
+        text = str(self.tokenizer.decode(gen_ids, skip_special_tokens=True)).strip()
         text = f"{self.cfg.proposal_prefix}{text}".strip()
         return Proposal(
             text=text,
@@ -386,7 +390,12 @@ class HFPolicyBackend:
         return out.loss.to(torch.float32), int(valid.item())
 
     def _prompt_text(self, task: Task) -> str:
-        messages = build_prompt(task, self.worker_names)
+        # `constrained_allow_self` is documented "keep in sync with max_depth > 0",
+        # which is the value the parse-gate uses, so the prompt must not advertise
+        # the self index when it is False.
+        messages = build_prompt(
+            task, self.worker_names, allow_self=self.cfg.constrained_allow_self
+        )
         return (
             _chat_text(self.tokenizer, messages, add_generation_prompt=True)
             + self.cfg.proposal_prefix

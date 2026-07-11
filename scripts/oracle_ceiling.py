@@ -377,8 +377,22 @@ def router_gap_closed(trinity_acc: float, best_single_acc: float,
     """(trinity - best_single) / (routing_oracle - best_single).
 
     Fraction of the REAL (achievable) headroom the trained router captures. Returns
-    NaN when the denominator is ~0 (no achievable headroom -> the ratio is undefined,
+    NaN when the denominator is <= 0 (no achievable headroom -> the ratio is undefined,
     not zero), so callers must guard on the headroom CI before trusting it.
+
+    ``best_single_acc`` must come from the SAME estimation regime as
+    ``routing_oracle_acc`` (i.e. the cross-fit ``best_single_crossfit``, which the
+    oracle is floored at). Mixing the full-K best_single with the cross-fit oracle can
+    make the denominator negative, and a negative denominator silently flips the sign:
+    a router BELOW the baseline would report a large positive capture.
+
+    Args:
+        trinity_acc: The trained router's accuracy.
+        best_single_acc: Cross-fit best-single accuracy (the routing baseline).
+        routing_oracle_acc: Cross-fit routing-oracle accuracy (the achievable ceiling).
+
+    Returns:
+        The captured fraction, or NaN when there is no achievable headroom.
     """
     denom = routing_oracle_acc - best_single_acc
     # Non-positive denom means no achievable headroom (undefined ratio), not a
@@ -448,6 +462,7 @@ def analyze_matrix(
         "point_estimates": {
             "best_single": stats.best_single,
             "best_single_model": models[stats.best_single_model] if models else None,
+            "best_single_crossfit": stats.best_single_crossfit,
             "routing_oracle": stats.routing_oracle,
             "routing_oracle_naive_biased": stats.routing_oracle_naive,
             "winners_curse_bias": stats.routing_oracle_naive - stats.routing_oracle,
@@ -477,6 +492,9 @@ def analyze_matrix(
         best_correct = (p[:, best_m] >= 0.5).astype(int)
         tri = np.array([int(trinity_per_query.get(q, 0)) for q in qids])
         trinity_acc = float(tri.mean())
+        # Use the cross-fit best_single: it is the baseline `routing_headroom` is measured
+        # from and the floor `routing_oracle` is clamped to, so the ratio stays a fraction
+        # of that same headroom (and its denominator can never go negative).
         gap = router_gap_closed(trinity_acc, stats.best_single_crossfit, stats.routing_oracle)
         report["trinity"] = {
             "accuracy": trinity_acc,
@@ -484,6 +502,13 @@ def analyze_matrix(
             "mcnemar_vs_best_single": mcnemar(tri, best_correct),
         }
 
+    # Pool-complementarity audit: which model is redundant, and which to swap. This
+    # is the other half advertised in this tool's title (docs/ORACLE_CEILING_DIAGNOSTIC
+    # .md §6, IMPROVEMENTS.md #1) — it answers the "swap which model?" the POOL_BOUND
+    # verdict raises. Read-only over the same solve tensor; changes no scoring math.
+    from trinity.analysis.complementarity import analyze_tensor
+
+    report["pool_complementarity"] = analyze_tensor(S, models).to_dict()
     report["verdict"] = _verdict(report)
     return report
 
@@ -510,6 +535,10 @@ def _verdict(report: dict) -> dict:
         label = "POOL_BOUND"
         msg = ("Routing cannot help on this pool: headroom CI upper bound <= 0.02 and "
                "includes 0. The lever is the model pool, not the router.")
+        # Name the concrete swap candidate the pool-complementarity audit identified.
+        swap = report.get("pool_complementarity", {}).get("swap_recommendation")
+        if swap:
+            msg = f"{msg} {swap}"
     elif lo > 0.0:
         if gap is not None and not math.isnan(gap) and gap < 0.5:
             label = "ROUTER_BOUND"

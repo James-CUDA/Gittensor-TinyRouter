@@ -8,7 +8,9 @@ The Verifier role ends its response with a line of the form::
 This module extracts that verdict deterministically and the free-text diagnosis
 that precedes it. Per SPEC §4.6 the parse is:
 
-- Scan for ``VERDICT:\\s*(ACCEPT|REVISE)`` (case-insensitive).
+- Scan for ``VERDICT:\\s*(ACCEPT|REVISE)\\b`` (case-insensitive). The trailing
+  word boundary matters: a longer word that merely *starts* with the token
+  (``ACCEPTABLE``, ``ACCEPTED``, ``REVISED``) is NOT a committed verdict.
 - Use the **last** match (the model may discuss ACCEPT/REVISE before committing).
 - If no match exists, return ``None``. The orchestration layer treats a missing
   verdict as fail-safe REVISE (it never terminates on an unparseable verifier,
@@ -23,7 +25,26 @@ import re
 __all__ = ["VERDICT_RE", "parse_verdict", "extract_diagnosis"]
 
 # Case-insensitive verdict pattern. ``finditer`` lets us take the LAST occurrence.
-VERDICT_RE = re.compile(r"VERDICT:\s*(ACCEPT|REVISE)", re.IGNORECASE)
+#
+# Between "VERDICT" and the verdict word we tolerate the colon plus any run of
+# whitespace and common Markdown emphasis / separator characters (``*`` bold/
+# italic, ``_`` italic, `` ` `` code span, ``~`` strike, ``-`` dash). Models
+# routinely format the line as ``**VERDICT:** ACCEPT``, ``VERDICT: **ACCEPT**`` or
+# ``VERDICT: `REVISE` `` — a strict ``VERDICT:\s*`` misses all of those, and the
+# loop then fail-safes to REVISE, so a correct+complete answer never earns the
+# early ACCEPT (which needlessly burns turns, hurting the efficiency term and
+# raising latency/cost). The character class matches no letters, so prose like
+# "the verdict is ... accept" is still rejected: the verdict word must sit
+# immediately after VERDICT + markers.
+#
+# The trailing ``(?![A-Za-z])`` anchors the token so a longer word that merely
+# *starts* with ACCEPT/REVISE ("VERDICT: ACCEPTABLE only if fixed", "ACCEPTED with
+# reservations", "REVISED the plan") is NOT read as a committed verdict. A plain
+# ``\b`` cannot be used here: an underscore is a word character, so ``\b`` would
+# reject the common italic wrapper ``VERDICT: __REVISE__``. The negative lookahead
+# blocks only a trailing *letter*, so closing markdown (``**``/``__``/`` ` ``) and
+# punctuation are still fine.
+VERDICT_RE = re.compile(r"VERDICT\b[\s:*_`~-]*(ACCEPT|REVISE)(?![A-Za-z])", re.IGNORECASE)
 
 
 def parse_verdict(text: str) -> str | None:

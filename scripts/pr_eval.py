@@ -32,18 +32,43 @@ import yaml
 _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO / "src"))
 
-# ---- Constants ----
-_EXPECTED_HEAD_PARAMS = 6144   # 6 × 1024
-_EXPECTED_SVF_PARAMS = 7168    # 7 × 1024
-_EXPECTED_TOTAL = _EXPECTED_HEAD_PARAMS + _EXPECTED_SVF_PARAMS  # 13312
-_MIN_TRAINING_COST = 15.0       # plausible minimum for a full CMA-ES run
-_MAX_WEIGHT_MAGNITUDE = 1e6     # weights beyond this are degenerate
-_COPY_THRESHOLD = 0.999          # cosine similarity threshold for duplicate detection
-_OVERFIT_HARD_REJECT = 0.10      # eval-audit gap above this = reject
-_OVERFIT_PENALTY = 0.05          # gap above this = 0.85 penalty
-_RATE_LIMIT_WINDOW_DAYS = 7
-_RATE_LIMIT_MAX_SUBMISSIONS = 1
-_POOL_MODELS = ["qwen3.5-35b-a3b", "minimax-m3", "deepseek-v4-flash"]
+from trinity.submission.constants import (
+    DEFAULT_POOL_MODELS,
+    DUPLICATE_HEAD_COSINE_THRESHOLD,
+    EXPECTED_TOTAL_PARAMS,
+    MAX_WEIGHT_MAGNITUDE,
+    MIN_TRAINING_COST_USD,
+    N_HEAD_MODELS,
+    RATE_LIMIT_MAX_SUBMISSIONS,
+    RATE_LIMIT_WINDOW_DAYS,
+)
+from trinity.submission.gates import (
+    check_duplicate as _check_duplicate,
+    check_rate_limit as _check_rate_limit,
+    cosine_similarity as _cosine_similarity,
+    parse_utc_timestamp as _parse_utc_timestamp,
+    rate_limit_entries as _rate_limit_entries,
+    routing_invariant_head as _routing_invariant_head,
+    validate_ledger_receipt_cost,
+    validate_pack_schema,
+    validate_receipt as _validate_receipt,
+    validate_theta_integrity,
+    validate_weights as _validate_weights,
+)
+
+# Back-compat aliases for tests that import pr_eval directly.
+_EXPECTED_HEAD_PARAMS = 6144
+_EXPECTED_SVF_PARAMS = 7168
+_EXPECTED_TOTAL = EXPECTED_TOTAL_PARAMS
+_MIN_TRAINING_COST = MIN_TRAINING_COST_USD
+_MAX_WEIGHT_MAGNITUDE = MAX_WEIGHT_MAGNITUDE
+_COPY_THRESHOLD = DUPLICATE_HEAD_COSINE_THRESHOLD
+_OVERFIT_HARD_REJECT = 0.10
+_OVERFIT_PENALTY = 0.05
+_RATE_LIMIT_WINDOW_DAYS = RATE_LIMIT_WINDOW_DAYS
+_RATE_LIMIT_MAX_SUBMISSIONS = RATE_LIMIT_MAX_SUBMISSIONS
+_POOL_MODELS = list(DEFAULT_POOL_MODELS)
+_N_HEAD_MODELS = N_HEAD_MODELS
 
 
 # ==========================================================================
@@ -133,210 +158,16 @@ def _load_submission(submission_dir: Path) -> Optional[Tuple[np.ndarray, np.ndar
     return head_W.astype(np.float32), svf_scales.astype(np.float32), receipt
 
 
-# ==========================================================================
-# Gate 1: Rate Limiting
-# ==========================================================================
-
-def _check_rate_limit(miner_name: str, benchmark: str, leaderboard: dict) -> Optional[str]:
-    """Check if miner has exceeded the submission rate limit.
-
-    Returns None if allowed, or an error string if rate-limited.
-    """
-    bench_entry = leaderboard.get("benchmarks", {}).get(benchmark, {})
-    history = bench_entry.get("history", [])
-
-    cutoff = time.time() - _RATE_LIMIT_WINDOW_DAYS * 86400
-    recent = 0
-    for entry in history:
-        ts_str = entry.get("timestamp", "")
-        try:
-            ts = time.mktime(time.strptime(ts_str, "%Y-%m-%dT%H:%M:%SZ"))
-        except (ValueError, OSError):
-            continue
-        if entry.get("miner") == miner_name and ts > cutoff:
-            recent += 1
-
-    if recent >= _RATE_LIMIT_MAX_SUBMISSIONS:
-        return f"rate_limited: {recent} submission(s) in the last {_RATE_LIMIT_WINDOW_DAYS} days (max {_RATE_LIMIT_MAX_SUBMISSIONS})"
-    return None
-
-
-# ==========================================================================
-# Gate 2: Weight Validation
-# ==========================================================================
-
-def _validate_weights(head_W: np.ndarray, svf_scales: np.ndarray) -> Optional[str]:
-    """Validate weight array integrity. Returns None if clean, error string if corrupt."""
-    # Param count
-    if head_W.size + svf_scales.size != _EXPECTED_TOTAL:
-        return f"param_count: got {head_W.size + svf_scales.size}, expected {_EXPECTED_TOTAL}"
-    if head_W.shape != (6, 1024):
-        return f"head_shape: got {head_W.shape}, expected (6, 1024)"
-
-    # NaN / Inf
-    if np.any(np.isnan(head_W)) or np.any(np.isnan(svf_scales)):
-        return "weights_contain_NaN"
-    if np.any(np.isinf(head_W)) or np.any(np.isinf(svf_scales)):
-        return "weights_contain_Inf"
-
-    # Extreme magnitudes
-    if np.any(np.abs(head_W) > _MAX_WEIGHT_MAGNITUDE):
-        return f"head_weights_exceed_max: max_abs={np.max(np.abs(head_W)):.1f}"
-    if np.any(np.abs(svf_scales) > _MAX_WEIGHT_MAGNITUDE):
-        return f"svf_scales_exceed_max: max_abs={np.max(np.abs(svf_scales)):.1f}"
-
-    # All-zeros head (untrained)
-    if np.allclose(head_W, 0.0):
-        return "head_weights_all_zeros"
-
-    # SVF scales too close to zero (would zero out the SLM)
-    if np.allclose(svf_scales, 0.0):
-        return "svf_scales_all_zeros"
-
-    # Head norm implausibly tiny after training (should be > 0.01 after 60 gens)
-    head_norm = float(np.linalg.norm(head_W))
-    if head_norm < 0.001:
-        return f"head_weight_norm_too_small: {head_norm:.6f}"
-
-    return None
-
-
-# ==========================================================================
-# Gate 3: Duplicate Detection
-# ==========================================================================
-
-def _check_duplicate(head_vec: np.ndarray, submissions_root: Path,
-                      current_miner: str, current_gen: int) -> Optional[str]:
-    """Check cosine similarity against ALL previous submissions.
-
-    Scans submissions/*/merged/ and looks for near-identical weight vectors.
-    Returns None if unique, error string with the matched miner/gen if duplicate.
-    """
-    # Check all submission directories
-    for sub_dir in sorted(submissions_root.glob("*/*/")):
-        parts = sub_dir.relative_to(submissions_root).parts
-        if len(parts) < 2:
-            continue
-        other_miner, other_gen = parts[0], parts[1]
-        if other_miner == current_miner and other_gen == str(current_gen):
-            continue  # skip self
-
-        hw_path = sub_dir / "head_weights.npy"
-        sv_path = sub_dir / "svf_scales.npy"
-        if not hw_path.exists() or not sv_path.exists():
-            continue
-
-        try:
-            other_hw = np.load(str(hw_path)).astype(np.float64).ravel()
-            other_sv = np.load(str(sv_path)).astype(np.float64).ravel()
-        except (ValueError, OSError):
-            continue
-
-        other_vec = np.concatenate([other_hw, other_sv])
-        sim = _cosine_similarity(head_vec, other_vec)
-
-        if sim > _COPY_THRESHOLD:
-            return f"duplicate_of_{other_miner}_gen_{other_gen}_sim_{sim:.4f}"
-
-    # Also check the current king from leaderboard
-    lb = _load_leaderboard()
-    for bench_name, bench_entry in lb.get("benchmarks", {}).items():
-        king_miner = bench_entry.get("best_miner", "")
-        king_gen = bench_entry.get("best_generation", 0)
-        if king_miner and king_miner != current_miner:
-            king_dir = submissions_root / king_miner / str(king_gen)
-            hw_path = king_dir / "head_weights.npy"
-            sv_path = king_dir / "svf_scales.npy"
-            if hw_path.exists() and sv_path.exists():
-                try:
-                    king_hw = np.load(str(hw_path)).astype(np.float64).ravel()
-                    king_sv = np.load(str(sv_path)).astype(np.float64).ravel()
-                    king_vec = np.concatenate([king_hw, king_sv])
-                    sim = _cosine_similarity(head_vec, king_vec)
-                    if sim > _COPY_THRESHOLD:
-                        return f"duplicate_of_king_{king_miner}_gen_{king_gen}_sim_{sim:.4f}"
-                except (ValueError, OSError):
-                    pass
-
-    return None
-
-
-def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    a, b = np.asarray(a, dtype=np.float64).ravel(), np.asarray(b, dtype=np.float64).ravel()
-    na, nb = np.linalg.norm(a), np.linalg.norm(b)
-    if na == 0.0 or nb == 0.0:
-        return 1.0 if na == nb else 0.0
-    return float(np.dot(a, b) / (na * nb))
-
-
-# ==========================================================================
-# Gate 4: Receipt Cross-Validation
-# ==========================================================================
-
-def _validate_receipt(receipt: dict) -> Optional[str]:
-    """Cross-validate receipt fields for plausibility. Returns None if plausible."""
-    # Cost must be non-zero and above minimum
-    cost = receipt.get("total_cost_usd", 0.0)
-    if cost <= 0.0:
-        return "receipt_cost_zero_or_missing"
-    if cost < _MIN_TRAINING_COST:
-        return f"receipt_cost_too_low: ${cost:.2f} < ${_MIN_TRAINING_COST:.2f} minimum"
-
-    # Fitness history
-    history = receipt.get("fitness_history", [])
-    if not history or len(history) < 3:
-        return "receipt_fitness_history_too_short: need >= 3 entries"
-
-    # Extract fitness values
-    values = []
-    for entry in history:
-        if isinstance(entry, dict):
-            v = entry.get("gen_mean_fitness", entry.get("mean_fitness", entry.get("best_fitness")))
-        elif isinstance(entry, (int, float)):
-            v = entry
-        else:
-            continue
-        if v is not None:
-            values.append(float(v))
-
-    if len(values) < 3:
-        return "receipt_fitness_history_no_valid_values"
-
-    # First generation should not be perfect
-    if values[0] > 0.98:
-        return f"receipt_fitness_starts_too_high: {values[0]:.4f}"
-
-    # Should not be a flat line
-    if max(values) - min(values) < 0.001:
-        return "receipt_fitness_flat_line"
-
-    # Should not be perfectly monotonic (real CMA-ES is noisy)
-    diffs = [values[i+1] - values[i] for i in range(len(values)-1)]
-    if len(diffs) > 3 and all(d >= 0 for d in diffs):
-        return "receipt_fitness_too_perfect: monotonically increasing"
-
-    # Generation count should match history length
-    claimed_gens = receipt.get("generations", 0)
-    if claimed_gens > 0 and abs(claimed_gens - len(history)) > 5:
-        return f"receipt_generations_mismatch: claimed {claimed_gens}, history has {len(history)}"
-
-    # Best fitness should be close to the max in history
-    best_fitness = receipt.get("best_fitness", 0.0)
-    if best_fitness > 0.0:
-        max_in_history = max(values)
-        if abs(best_fitness - max_in_history) > 0.1:
-            return f"receipt_best_fitness_mismatch: claimed {best_fitness:.4f}, history max {max_in_history:.4f}"
-
-    return None
+# Gate implementations live in trinity.submission.gates (imported above).
 
 
 # ==========================================================================
 # Cached evaluation
 # ==========================================================================
 
-def _evaluate_cached(head, encoder, items: List[dict], pool_model_names: List[str]) -> float:
-    """Evaluate a head on cached benchmark items. Returns accuracy [0, 1]."""
-    import torch
+def _evaluate_cached(policy, items: List[dict], pool_model_names: List[str]) -> float:
+    """Evaluate a configured policy on cached benchmark items. Returns accuracy [0, 1]."""
+    from trinity.adapters.hidden_item import from_protocol_item
     from trinity.orchestration.reward import score_text
 
     if not items:
@@ -344,12 +175,11 @@ def _evaluate_cached(head, encoder, items: List[dict], pool_model_names: List[st
 
     correct = 0
     for item in items:
-        h_np = encoder.encode(item["question_text"])
-        h_t = torch.as_tensor(np.asarray(h_np, dtype=np.float32), device=head.weight.device)
-        agent_idx, _role, _dbg = head.select(h_t, sample=False)
+        canonical = from_protocol_item(item)
+        agent_idx, _role = policy.decide(canonical["prompt"], sample=False)
         model_name = pool_model_names[agent_idx % len(pool_model_names)]
-        cached = item.get("model_answers", {}).get(model_name, "")
-        if score_text(item.get("benchmark", "math500"), cached, item.get("correct_answer")) > 0.0:
+        cached = canonical["cached_model_answers"].get(model_name, "")
+        if score_text(canonical["benchmark"] or "math500", cached, canonical["reference"]) > 0.0:
             correct += 1
 
     return correct / len(items)
@@ -365,6 +195,7 @@ async def _evaluate_live(
 ) -> Tuple[float, float]:
     """Run full multi-turn eval with real API calls. Returns (accuracy, avg_turns)."""
     import httpx
+    from trinity.adapters.hidden_item import from_protocol_item
     from trinity.orchestration.reward import score
     from trinity.orchestration.session import run_trajectory
     from trinity.types import Task
@@ -372,12 +203,15 @@ async def _evaluate_live(
     if not items:
         return 0.0, 0.0
 
-    tasks = [Task(
-        task_id=item.get("question_id", f"q{i}"),
-        benchmark=item.get("benchmark", "math500"),
-        prompt=item["question_text"],
-        answer=item.get("correct_answer"),
-    ) for i, item in enumerate(items)]
+    tasks = []
+    for i, item in enumerate(items):
+        canonical = from_protocol_item(item)
+        tasks.append(Task(
+            task_id=canonical["task_id"] or f"q{i}",
+            benchmark=canonical["benchmark"] or "math500",
+            prompt=canonical["prompt"],
+            answer=canonical["reference"],
+        ))
 
     correct = 0
     total_turns = 0
@@ -418,63 +252,73 @@ def _compute_score(hidden_acc: float, live_acc: float, avg_turns: float,
 # Gate 7: Novelty Computation
 # ==========================================================================
 
-def _compute_novelty(head, encoder, eval_items: List[dict],
-                      pool_models: List[str]) -> float:
-    """Compute novelty by comparing routing decisions against the current king.
+def _king_submission_dir(
+    benchmark: str,
+    lb: dict,
+    submissions_root: Path,
+) -> Optional[Path]:
+    """Return the reigning submission directory for ``benchmark``, if any."""
+    bench_entry = lb.get("benchmarks", {}).get(benchmark, {})
+    king_miner = bench_entry.get("best_miner")
+    king_gen = bench_entry.get("best_generation", 0)
+    if not king_miner or not king_gen:
+        return None
+    king_dir = submissions_root / str(king_miner) / str(king_gen)
+    if not (king_dir / "head_weights.npy").exists() or not (king_dir / "svf_scales.npy").exists():
+        return None
+    return king_dir
 
-    Loads the current best head from the leaderboard, runs both heads on the
-    first min(50, len(eval_items)) questions, and returns 1.0 - agreement_rate.
 
-    If there is no king yet, returns 0.5 (neutral).
+def _routing_decisions(policy, items: List[dict], *, ref_count: int) -> List[tuple]:
+    """Collect turn-1 routing decisions via the configured policy."""
+    from trinity.adapters.hidden_item import from_protocol_item
+    from trinity.orchestration.session import _transcript_text
+
+    decisions: List[tuple] = []
+    for item in items[:ref_count]:
+        canonical = from_protocol_item(item)
+        transcript = _transcript_text(canonical["prompt"], [])
+        agent_idx, role = policy.decide(transcript, sample=False)
+        decisions.append((agent_idx, role))
+    return decisions
+
+
+def _compute_novelty(
+    benchmark: str,
+    policy,
+    spec,
+    eval_items: List[dict],
+) -> float:
+    """Compare submitter vs benchmark king using full policy state (head + SVF).
+
+    Loads the reigning submission for the benchmark currently under evaluation
+    (not the first benchmark in leaderboard iteration order) and compares
+    turn-1 routing on the same QUERY transcript envelope training uses.
     """
+    from trinity.novelty import NEUTRAL_NOVELTY, novelty_score
+
     lb = _load_leaderboard()
-    submissions_root = _REPO / "submissions"
-
-    # Find the current king
-    king_miner = None
-    king_gen = 0
-    for bench_name, bench_entry in lb.get("benchmarks", {}).items():
-        km = bench_entry.get("best_miner")
-        kg = bench_entry.get("best_generation", 0)
-        if km and kg:
-            king_miner = km
-            king_gen = kg
-            break
-
-    if not king_miner:
-        return 0.5  # no king yet — neutral novelty
-
-    king_dir = submissions_root / king_miner / str(king_gen)
-    hw_path = king_dir / "head_weights.npy"
-    if not hw_path.exists():
-        return 0.5
-
-    import torch
-    from trinity.coordinator.head import LinearHead
+    king_dir = _king_submission_dir(benchmark, lb, _REPO / "submissions")
+    ref_count = min(50, len(eval_items))
+    if king_dir is None or ref_count == 0:
+        return NEUTRAL_NOVELTY
 
     try:
-        king_hw = np.load(str(hw_path))
+        king_hw = np.load(str(king_dir / "head_weights.npy"))
+        king_svf = np.load(str(king_dir / "svf_scales.npy"))
     except (ValueError, OSError):
-        return 0.5
+        return NEUTRAL_NOVELTY
 
-    king_head = LinearHead(n_a=6, d_h=1024, n_models=3).to(head.weight.device)
-    king_head.load_weight(king_hw)
+    submitter_decisions = _routing_decisions(policy, eval_items, ref_count=ref_count)
 
-    # Compare routing decisions on reference questions
-    ref_count = min(50, len(eval_items))
-    matches = 0
-    for item in eval_items[:ref_count]:
-        h_np = encoder.encode(item["question_text"])
-        h_t = torch.as_tensor(np.asarray(h_np, dtype=np.float32), device=head.weight.device)
+    king_theta = np.concatenate([
+        np.asarray(king_hw, dtype=np.float64).ravel(),
+        np.asarray(king_svf, dtype=np.float64).ravel(),
+    ])
+    policy.configure(king_theta, spec)
+    king_decisions = _routing_decisions(policy, eval_items, ref_count=ref_count)
 
-        sub_agent, sub_role, _ = head.select(h_t, sample=False)
-        king_agent, king_role, _ = king_head.select(h_t, sample=False)
-
-        if sub_agent == king_agent and sub_role == king_role:
-            matches += 1
-
-    agreement = matches / ref_count if ref_count > 0 else 0.0
-    return 1.0 - agreement
+    return novelty_score(submitter_decisions, king_decisions)
 
 
 # ==========================================================================
@@ -488,12 +332,8 @@ def _load_leaderboard() -> dict:
     return {"benchmarks": {}}
 
 
-def _update_leaderboard(benchmark: str, miner_name: str, generation: int,
-                         pr_number: int, score: float, hidden_acc: float,
-                         live_acc: float, avg_turns: float) -> None:
-    """Update leaderboard.json with a new winning submission."""
-    lb = _load_leaderboard()
-    bench_entry = lb.setdefault("benchmarks", {}).setdefault(benchmark, {
+def _empty_bench_entry() -> dict:
+    return {
         "best_score": 0.0,
         "best_miner": None,
         "best_generation": 0,
@@ -502,7 +342,56 @@ def _update_leaderboard(benchmark: str, miner_name: str, generation: int,
         "best_single_model": None,
         "oracle_ceiling": None,
         "history": [],
+        "attempts": [],
+    }
+
+
+def _record_attempt(benchmark: str, miner_name: str, generation: int,
+                    pr_number: int) -> None:
+    """Consume one weekly submission slot for ``miner_name`` on ``benchmark``.
+
+    Called as soon as Gate 1 passes so later gate failures and score-rejections
+    still count toward the rate limit (SUBMITTING.md: 1 submission / week).
+    On first write, seeds ``attempts`` from legacy win-only ``history`` so a
+    recent winner remains rate-limited after this change rolls out.
+    """
+    lb = _load_leaderboard()
+    bench_entry = lb.setdefault("benchmarks", {}).setdefault(
+        benchmark, _empty_bench_entry(),
+    )
+    if "attempts" not in bench_entry:
+        bench_entry["attempts"] = [
+            dict(entry) for entry in bench_entry.get("history", [])
+        ]
+    # Idempotent per PR: a re-run of the same PR (CI retry, transient failure
+    # after this point on a prior run) must not append a second attempt and
+    # inflate the miner's weekly count. A distinct PR always records.
+    already = any(
+        e.get("miner") == miner_name and e.get("pr") == pr_number
+        for e in bench_entry["attempts"]
+    )
+    if already:
+        print(f"[pr_eval] attempt for PR #{pr_number} already recorded; not double-counting")
+        return
+    bench_entry["attempts"].append({
+        "miner": miner_name,
+        "generation": generation,
+        "pr": pr_number,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     })
+    lb["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    (_REPO / "leaderboard.json").write_text(json.dumps(lb, indent=2) + "\n")
+    print(f"[pr_eval] attempt recorded for rate limit ({miner_name}/{generation})")
+
+
+def _update_leaderboard(benchmark: str, miner_name: str, generation: int,
+                         pr_number: int, score: float, hidden_acc: float,
+                         live_acc: float, avg_turns: float) -> None:
+    """Update leaderboard.json with a new winning submission."""
+    lb = _load_leaderboard()
+    bench_entry = lb.setdefault("benchmarks", {}).setdefault(
+        benchmark, _empty_bench_entry(),
+    )
 
     bench_entry["best_score"] = round(score, 4)
     bench_entry["best_miner"] = miner_name
@@ -510,7 +399,7 @@ def _update_leaderboard(benchmark: str, miner_name: str, generation: int,
     bench_entry["best_pr"] = pr_number
     bench_entry["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-    bench_entry["history"].append({
+    bench_entry.setdefault("history", []).append({
         "miner": miner_name,
         "generation": generation,
         "score": round(score, 4),
@@ -555,18 +444,16 @@ async def evaluate_pr(pr_number: int, benchmark: str,
         return _reject("load_failed", "Failed to load submission files")
     head_W, svf_scales, receipt = loaded
 
-    head_vec = np.concatenate([
-        np.asarray(head_W, dtype=np.float64).ravel(),
-        np.asarray(svf_scales, dtype=np.float64).ravel(),
-    ])
-
     # ══════════════════════════════════════════════════════════════
     # GATE 1: Rate Limiting (before any GPU/API work)
     # ══════════════════════════════════════════════════════════════
     lb = _load_leaderboard()
-    err = _check_rate_limit(miner_name, benchmark, lb)
+    err = _check_rate_limit(miner_name, benchmark, lb, current_pr=pr_number)
     if err:
         return _reject(err)
+    # Slot consumed even if later gates fail or the score loses — otherwise
+    # rejected attempts never counted and miners could probe weekly.
+    _record_attempt(benchmark, miner_name, generation, pr_number)
 
     # ══════════════════════════════════════════════════════════════
     # GATE 2: Weight Validation (NaN, Inf, extreme values, untrained)
@@ -579,7 +466,8 @@ async def evaluate_pr(pr_number: int, benchmark: str,
     # GATE 3: Duplicate Detection (cosine similarity vs all history)
     # ══════════════════════════════════════════════════════════════
     submissions_root = _REPO / "submissions"
-    err = _check_duplicate(head_vec, submissions_root, miner_name, generation)
+    err = _check_duplicate(head_W, svf_scales, submissions_root, miner_name, generation,
+                           leaderboard=lb, load_leaderboard=_load_leaderboard)
     if err:
         return _reject(err)
 
@@ -590,7 +478,29 @@ async def evaluate_pr(pr_number: int, benchmark: str,
     if err:
         return _reject(err)
 
-    print("[pr_eval] All 4 pre-eval gates passed ✓\n")
+    # ══════════════════════════════════════════════════════════════
+    # GATE 5: Ledger / receipt cost consistency (offline, no GPU)
+    # ══════════════════════════════════════════════════════════════
+    ledger_path = os.environ.get("TRINITY_COST_LEDGER")
+    err = validate_ledger_receipt_cost(receipt, ledger_path)
+    if err:
+        return _reject(err)
+
+    # ══════════════════════════════════════════════════════════════
+    # GATE 6: Receipt schema / benchmark consistency (offline)
+    # ══════════════════════════════════════════════════════════════
+    err = validate_pack_schema(receipt, benchmark)
+    if err:
+        return _reject(err)
+
+    # ══════════════════════════════════════════════════════════════
+    # GATE 7: Theta pack/unpack integrity (offline)
+    # ══════════════════════════════════════════════════════════════
+    err = validate_theta_integrity(head_W, svf_scales)
+    if err:
+        return _reject(err)
+
+    print("[pr_eval] All 7 pre-eval gates passed ✓\n")
 
     # ══════════════════════════════════════════════════════════════
     # Load benchmark + encoder (GPU work starts here)
@@ -615,21 +525,20 @@ async def evaluate_pr(pr_number: int, benchmark: str,
         n_models=3, n_roles=3,
         l2_normalize=cc["hidden_state"].get("l2_normalize", True),
     )
-    encoder = policy.encoder
-
-    from trinity.coordinator.head import LinearHead
-    head = LinearHead(n_a=6, d_h=1024, n_models=3).to(encoder.model.device)
-    head.load_weight(head_W)
+    policy.configure(np.concatenate([
+        np.asarray(head_W, dtype=np.float64).ravel(),
+        np.asarray(svf_scales, dtype=np.float64).ravel(),
+    ]), spec)
 
     # ---- Cached eval ----
     print("[pr_eval] Running cached eval (150 questions)...")
     t0 = time.time()
-    hidden_acc = _evaluate_cached(head, encoder, eval_items, _POOL_MODELS)
+    hidden_acc = _evaluate_cached(policy, eval_items, _POOL_MODELS)
     print(f"  hidden_acc = {hidden_acc:.4f}  ({time.time() - t0:.1f}s)")
 
     # ---- Audit eval ----
     print("[pr_eval] Running audit eval (50 questions)...")
-    audit_acc = _evaluate_cached(head, encoder, audit_items, _POOL_MODELS) if audit_items else hidden_acc
+    audit_acc = _evaluate_cached(policy, audit_items, _POOL_MODELS) if audit_items else hidden_acc
     print(f"  audit_acc  = {audit_acc:.4f}")
 
     # ══════════════════════════════════════════════════════════════
@@ -648,17 +557,13 @@ async def evaluate_pr(pr_number: int, benchmark: str,
     # ---- Live eval ----
     print("[pr_eval] Running live multi-turn eval (20 questions, real API calls)...")
     pool = OpenRouterPool(str(_REPO / "configs" / "models.yaml"))
-    policy.configure(np.concatenate([
-        np.asarray(head_W, dtype=np.float64).ravel(),
-        np.asarray(svf_scales, dtype=np.float64).ravel(),
-    ]), spec)
     live_acc, avg_turns = await _evaluate_live(policy, pool, _POOL_MODELS, live_items)
     print(f"  live_acc   = {live_acc:.4f}  avg_turns = {avg_turns:.2f}")
 
     # ══════════════════════════════════════════════════════════════
     # GATE 7: Compute actual novelty
     # ══════════════════════════════════════════════════════════════
-    novelty = _compute_novelty(head, encoder, eval_items, _POOL_MODELS)
+    novelty = _compute_novelty(benchmark, policy, spec, eval_items)
     print(f"  novelty    = {novelty:.4f}")
 
     # ---- Composite score ----

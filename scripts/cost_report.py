@@ -19,63 +19,22 @@ tokens. PRICES below should track the repo's current default model pool; pass
 from __future__ import annotations
 
 import argparse
-import hashlib
-import json
 import sys
 
-# ---- OpenRouter prices ($ per 1M tokens), (input, output). ----
-PRICES = {
-    "qwen3.5-35b-a3b": (0.14, 1.00),
-    "minimax-m3":      (0.30, 1.20),
-    "deepseek-v4-flash": (0.09, 0.18),
-}
-_DEFAULT_BLENDED_IN = sum(p[0] for p in PRICES.values()) / len(PRICES)
-_DEFAULT_BLENDED_OUT = sum(p[1] for p in PRICES.values()) / len(PRICES)
+from trinity.llm.cost_ledger import read_ledger_entries, verify_ledger_chain
+from trinity.llm.openrouter_pricing import (
+    OPENROUTER_POOL_PRICES,
+    default_blended_rates,
+    token_cost,
+)
+
+# Back-compat alias for scripts/tests that import PRICES from cost_report.
+PRICES = OPENROUTER_POOL_PRICES
+_DEFAULT_BLENDED_IN, _DEFAULT_BLENDED_OUT = default_blended_rates()
 
 
 def cost(prompt_tok: int, completion_tok: int, in_rate: float, out_rate: float) -> float:
     return prompt_tok / 1e6 * in_rate + completion_tok / 1e6 * out_rate
-
-
-def verify_ledger_chain(path: str) -> tuple[bool, int, str]:
-    """Verify the hash-chain integrity of a cost ledger.
-
-    Each entry's ``h`` field must equal
-    ``sha256(prev_h + {"m":...,"p":...,"c":...})``.
-    The first entry's previous hash is the empty string.
-
-    Returns:
-        (valid, num_entries, error_message).
-        If the chain is valid, ``error_message`` is empty.
-    """
-    prev_hash = ""
-    entries = 0
-    with open(path) as f:
-        for lineno, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                r = json.loads(line)
-            except json.JSONDecodeError:
-                return False, entries, f"line {lineno}: invalid JSON"
-            expected_h = r.pop("h", None)
-            payload = json.dumps(r, sort_keys=True)
-            computed_h = hashlib.sha256((prev_hash + payload).encode()).hexdigest()
-
-            if expected_h is None:
-                return False, entries, (
-                    f"line {lineno}: missing hash field 'h' "
-                    f"(ledger entries must be written by OpenRouterPool with hash-chain enabled)"
-                )
-            if computed_h != expected_h:
-                return False, entries, (
-                    f"line {lineno}: hash mismatch — expected {computed_h[:16]}..., "
-                    f"got {expected_h[:16]}... (chain broken or entry tampered)"
-                )
-            prev_hash = computed_h
-            entries += 1
-    return True, entries, ""
 
 
 def report_ledger(path: str) -> None:
@@ -90,26 +49,16 @@ def report_ledger(path: str) -> None:
     print(f"[ OK ] Ledger hash-chain verified ({num_entries} entries, all hashes intact)\n")
 
     per = {}  # model -> [prompt, completion, calls]
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                r = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            m = r.get("m", "?")
-            acc = per.setdefault(m, [0, 0, 0])
-            acc[0] += r.get("p", 0)
-            acc[1] += r.get("c", 0)
-            acc[2] += 1
+    for entry in read_ledger_entries(path):
+        acc = per.setdefault(entry.model, [0, 0, 0])
+        acc[0] += entry.prompt_tokens
+        acc[1] += entry.completion_tokens
+        acc[2] += 1
     total = 0.0
     print(f"{'model':18s} {'calls':>8s} {'prompt_tok':>12s} {'compl_tok':>12s} {'$':>9s}")
     print("-" * 64)
     for m, (p, c, n) in sorted(per.items()):
-        ir, orr = PRICES.get(m, (_DEFAULT_BLENDED_IN, _DEFAULT_BLENDED_OUT))
-        d = cost(p, c, ir, orr)
+        d = token_cost(m, p, c)
         total += d
         print(f"{m:18s} {n:8d} {p:12d} {c:12d} {d:9.3f}")
     print("-" * 64)

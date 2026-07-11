@@ -29,6 +29,7 @@ local dev machine has no torch/GPU; only the remote H200 box loads the model.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import yaml
@@ -40,6 +41,17 @@ _DEFAULT_CONFIG = _REPO_ROOT / "configs" / "trinity.yaml"
 # checkpoint at runtime rather than trusting these blindly.
 _EXPECTED_HIDDEN_SIZE = 1024
 _EXPECTED_NUM_LAYERS = 28
+
+#: SPEC §3.2 canonical extraction: the transcript is tokenized as
+#: ``transcript + HEAD_INPUT_SUFFIX``, one EOS is appended, and the head reads
+#: index ``-2`` -- the final token of this suffix.
+#:
+#: The suffix is what makes ``-2`` a *fixed* decision position rather than
+#: whatever token the transcript happened to end on. Appending EOS alone does not
+#: achieve that: attention is causal, so the hidden state at ``-2`` cannot see the
+#: EOS at ``-1``, and ``h[-2]`` is then bit-identical to the last content token's
+#: state with no EOS appended at all.
+HEAD_INPUT_SUFFIX: str = "\n<Head Input>"
 
 
 class CoordinatorEncoder:
@@ -96,11 +108,14 @@ class CoordinatorEncoder:
         self._dtype = self._resolve_dtype(dtype)
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModelForCausalLM.from_pretrained(
+        # `from_pretrained` is a decorated classmethod, so its return type does not
+        # carry `.to`; bind through Any before moving the module to the device.
+        model: Any = AutoModelForCausalLM.from_pretrained(
             model_name,
             torch_dtype=self._dtype,
             output_hidden_states=True,
         )
+        self.model = model
         self.model.to(device)
         self.model.eval()
         # The orthogonal SVD factors and head are not trained via autograd
@@ -168,12 +183,18 @@ class CoordinatorEncoder:
     # public API
     # ------------------------------------------------------------------ #
     def encode(self, transcript_text: str) -> np.ndarray:
-        """Return the penultimate-token hidden state for ``transcript_text``.
+        """Return the ``<Head Input>``-position hidden state for ``transcript_text``.
 
-        Implements the SPEC §3.2 canonical extraction: tokenize the transcript,
-        append a single EOS token so a penultimate position exists, run one
+        Implements the SPEC §3.2 canonical extraction: tokenize
+        ``transcript + HEAD_INPUT_SUFFIX``, append a single EOS token, run one
         forward pass, and read ``hidden_states[-1][0, -2, :]`` (final layer,
-        penultimate output token).
+        penultimate output token -- the last token of the suffix).
+
+        The suffix is load-bearing. Without it, index ``-2`` lands on whatever
+        token the transcript happened to end with, so the head's sole input varies
+        with the transcript's trailing content instead of being a fixed decision
+        position. SPEC §3.2 records the cost of reading a content token instead of
+        the intended one: LiveCodeBench 61.46 -> 50.85.
 
         Parameters
         ----------
@@ -188,11 +209,11 @@ class CoordinatorEncoder:
         """
         torch = self._torch
 
-        # Tokenize WITHOUT auto special tokens so we control the sequence layout,
-        # then append exactly one EOS as the final position. The last real
-        # content token therefore sits at index -2 (the <Head Input> position).
+        # Tokenize WITHOUT auto special tokens so we control the sequence layout:
+        # [ transcript ... <Head Input> ] + [ EOS ]. The suffix's final token
+        # therefore sits at index -2, which is the position the head reads.
         enc = self.tokenizer(
-            transcript_text,
+            transcript_text + HEAD_INPUT_SUFFIX,
             return_tensors="pt",
             add_special_tokens=False,
         )

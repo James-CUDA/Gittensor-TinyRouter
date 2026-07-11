@@ -80,48 +80,33 @@ def _ledger_append(model: str, prompt_tokens: int, completion_tokens: int) -> No
     it before reporting totals.
 
     Used by scripts/cost_report.py to compute exact spend. Append-only JSONL,
-    one short line per call (atomic enough for concurrent training processes).
+    one short line per call. Disk appends take an exclusive sidecar lock around
+    read-tip + write so concurrent training processes share one chain tip.
     Best-effort: never let cost bookkeeping break an inference call.
     """
-    import hashlib
-
     path = os.environ.get("TRINITY_COST_LEDGER")
     if not path:
         return
     try:
-        short = model.rsplit("/", 1)[-1]
-        pt = int(prompt_tokens)
-        ct = int(completion_tokens)
+        from trinity.llm.cost_ledger import append_ledger_entry
 
-        prev_hash = ""
-        try:
-            with open(path, "r") as fh:
-                last = None
-                for line in fh:
-                    line = line.strip()
-                    if line:
-                        last = line
-                if last is not None:
-                    import json as _json
-
-                    prev = _json.loads(last)
-                    prev_hash = prev.get("h", "")
-        except (OSError, ValueError):
-            prev_hash = ""
-
-        payload = f'{{"m":"{short}","p":{pt},"c":{ct}}}'
-        h = hashlib.sha256((prev_hash + payload).encode()).hexdigest()
-
-        with open(path, "a") as f:
-            f.write(f'{{"m":"{short}","p":{pt},"c":{ct},"h":"{h}"}}\n')
+        append_ledger_entry(path, model, prompt_tokens, completion_tokens)
     except Exception:
         pass
 
 
 def _message_text(choice_message: dict) -> str:
-    """Normalize OpenRouter/OpenAI message content to plain text."""
+    """Normalize OpenRouter/OpenAI message content to plain text.
+
+    ``message.content`` is nullable in the chat-completions schema: providers send
+    ``null`` for an empty completion, or when the assistant message carries only
+    reasoning / tool-call metadata. "No text" normalizes to ``""`` — the same as a
+    missing key or an empty content list — never to the string ``"None"``.
+    """
 
     content = choice_message.get("content", "")
+    if content is None:
+        return ""
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -220,7 +205,12 @@ class OpenRouterPool:
             resp.raise_for_status()
             data = resp.json()
             choice = data["choices"][0]
-            usage = data.get("usage", {})
+            # `data.get("usage", {})` only defaults an ABSENT key. OpenAI-compatible
+            # providers also send `"usage": null` (some providers, and 200s with an
+            # empty completion), which would make `usage.get(...)` raise on `None` --
+            # crashing an otherwise-successful call. `or {}` covers absent and null,
+            # matching how `_message_text` already guards `content: null`.
+            usage = data.get("usage") or {}
             pt = usage.get("prompt_tokens", 0)
             ct = usage.get("completion_tokens", 0)
             _ledger_append(payload["model"], pt, ct)

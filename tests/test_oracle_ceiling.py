@@ -218,6 +218,64 @@ def test_router_gap_closed_nan_when_no_headroom():
     assert np.isnan(g)
 
 
+def test_router_gap_closed_nan_when_oracle_below_baseline():
+    """A negative denominator is undefined headroom, not a 'capture'.
+
+    Dividing a negative numerator by a negative denominator cancels the signs and
+    reports a below-baseline router as having captured the ceiling.
+    """
+    g = oc.router_gap_closed(0.75, 0.80, 0.78)   # trinity < best_single, oracle < best_single
+    assert np.isnan(g)
+
+
+def test_router_gap_closed_is_negative_when_router_trails_a_real_ceiling():
+    """With genuine headroom, a router below the baseline must read negative, not positive."""
+    g = oc.router_gap_closed(0.55, 0.60, 0.80)
+    assert g == pytest.approx(-0.25)
+
+
+def test_compute_stats_exposes_the_crossfit_baseline_headroom_is_measured_from():
+    S = _disjoint_specialists(Q=30, K=5)
+    stats = oc.compute_stats(S, crossfit_splits=60, seed=0)
+    assert stats.routing_headroom == pytest.approx(
+        stats.routing_oracle - stats.best_single_crossfit
+    )
+    # The oracle is floored at the cross-fit baseline, so this denominator is never negative.
+    assert stats.routing_oracle >= stats.best_single_crossfit
+
+
+def test_gap_closed_not_positive_when_router_is_below_baseline_on_a_flat_pool():
+    """End-to-end guard for the sign flip: identical models -> no achievable headroom.
+
+    `routing_oracle` is floored at the CROSS-FIT best_single, which can sit below the
+    full-K `best_single`. Feeding the full-K baseline made the denominator negative and
+    turned a router that trails the baseline into a large positive `router_gap_closed`
+    (which then trips the `gap >= 0.5` "near-ceiling" verdict branch).
+    """
+    rng = np.random.default_rng(0)
+    Q, M, K = 300, 3, 5
+    p_true = np.empty((Q, M))
+    easy = rng.random(Q) < 0.60          # all models solve the same easy queries
+    p_true[easy, :] = 0.9
+    p_true[~easy, :] = 0.1
+    S = (rng.random((Q, M, K)) < p_true[:, :, None]).astype(float)
+
+    matrix = oc._tensor_to_matrix(S, "flat-pool")
+    qids = [t["id"] for t in matrix["tasks"]]
+    stats = oc.compute_stats(S, crossfit_splits=60, seed=0)
+
+    # A router strictly worse than the best single model on every query it can be.
+    best_correct = (oc.p_hat(S)[:, stats.best_single_model] >= 0.5).astype(int)
+    trinity = {q: int(best_correct[i]) if i % 5 else 0 for i, q in enumerate(qids)}
+
+    rep = oc.analyze_matrix(matrix, trinity_per_query=trinity,
+                            n_boot=200, seed=0, crossfit_splits=60)
+    gap = rep["trinity"]["router_gap_closed"]
+    assert rep["trinity"]["accuracy"] < stats.best_single
+    assert np.isnan(gap) or gap <= 0.0
+    assert not (not np.isnan(gap) and gap >= 0.5)   # must not read as "near-ceiling"
+
+
 def test_threshold_oracle_matches_hard_definition():
     # Two models, two queries. p>=0.5 => model "solves" the query.
     # q0: m0 solves (p=0.8), m1 not (0.2); q1: m1 solves (0.6), m0 not (0.4).
