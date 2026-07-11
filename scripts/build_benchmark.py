@@ -71,10 +71,45 @@ def _encrypt_json(data: dict, password: str) -> str:
 
 
 def _sample_pool(benchmark: str, counts: Dict[str, int]) -> List[Any]:
-    """Sample the deterministic task pool per the frozen protocol (sealed seed)."""
+    """Sample the deterministic task pool per the frozen protocol (sealed seed).
+
+    The loaders substitute a tiny offline toy set whenever HuggingFace is
+    unreachable, a dataset is gated, or a split does not resolve. That fallback
+    exists so smoke tests run with zero network -- it must never reach the hidden
+    benchmark, whose questions are sealed and integrity-hashed. The
+    :class:`~trinity.adapters.split_policy.ToyFallbackWarning` the loaders already
+    emit is therefore escalated to an error here.
+
+    Without this the build limps on and dies later inside
+    :func:`benchmark_protocol.select_splits` with ``pool has 2 tasks but the
+    protocol needs 220`` -- an error naming neither the toy fallback nor the
+    benchmark split that failed to load.
+
+    Args:
+        benchmark: Benchmark name.
+        counts: Per-split question counts from the frozen protocol.
+
+    Returns:
+        The deterministic task pool.
+
+    Raises:
+        RuntimeError: If the pool would be drawn from the offline toy set.
+    """
+    import warnings
+
+    from trinity.adapters.split_policy import ToyFallbackWarning
     from trinity.orchestration.dataset import load_tasks
 
-    return protocol.sample_pool(load_tasks, benchmark, counts, seed=_BENCHMARK_SEED)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ToyFallbackWarning)
+        try:
+            return protocol.sample_pool(load_tasks, benchmark, counts, seed=_BENCHMARK_SEED)
+        except ToyFallbackWarning as exc:
+            raise RuntimeError(
+                f"Refusing to build the hidden benchmark for {benchmark!r} from the "
+                f"offline toy set: {exc} Install `datasets`, check network access, and "
+                f"verify the benchmark's train split exists upstream."
+            ) from exc
 
 
 async def _cache_answers(
