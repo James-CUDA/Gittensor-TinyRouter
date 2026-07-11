@@ -24,6 +24,11 @@ from .benchmarks import (
     MmluAdapter,
     register_builtin_adapters,
 )
+from .bigcodebench import (
+    BigCodeBenchAdapter,
+    BigCodeBenchReference,
+    register_bigcodebench_adapter,
+)
 from .builtin import DelegatingBenchmarkAdapter, register_livecodebench_v6_adapter
 from .livecodebench import LiveCodeBenchV6Adapter
 from .mmlu_pro import MmluProAdapter, register_mmlu_pro_adapter
@@ -58,6 +63,8 @@ __all__ = [
     "LiveCodeBenchAdapter",
     "SweBenchAdapter",
     "PatchReference",
+    "BigCodeBenchAdapter",
+    "BigCodeBenchReference",
     "MmluProAdapter",
     "register_adapter",
     "get_adapter",
@@ -66,6 +73,7 @@ __all__ = [
     "clear_registry",
     "register_builtin_adapters",
     "register_swebench_adapter",
+    "register_bigcodebench_adapter",
     "register_mmlu_pro_adapter",
 ]
 
@@ -74,4 +82,5 @@ __all__ = [
 register_builtin_adapters()
 register_livecodebench_v6_adapter()
 register_swebench_adapter()
+register_bigcodebench_adapter()
 register_mmlu_pro_adapter()
