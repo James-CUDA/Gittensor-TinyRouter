@@ -154,8 +154,13 @@ def check_trinity_config(cfg: Any) -> list[str]:
 
     head = cfg.get("coordinator", {}).get("head") if isinstance(cfg.get("coordinator"), Mapping) else None
     if isinstance(head, Mapping):
+        # Type-check first: a present-but-wrong-typed count (e.g. a string from
+        # YAML) is a hard error, not something to silently skip the cross-check on.
+        for key in ("n_a", "n_models", "n_roles"):
+            v = head.get(key)
+            if v is not None and not _is_int(v):
+                problems.append(f"head.{key} must be an int; got {v!r}")
         n_a, n_models, n_roles = head.get("n_a"), head.get("n_models"), head.get("n_roles")
-        # Narrow each individually so the arithmetic below is well-typed.
         if (_is_int(n_a) and _is_int(n_models) and _is_int(n_roles)
                 and n_a != n_models + n_roles):
             problems.append(
@@ -171,14 +176,28 @@ def check_trinity_config(cfg: Any) -> list[str]:
 
     cma = cfg.get("sep_cmaes")
     if isinstance(cma, Mapping):
+        # population_size and mu MUST be ints. Previously they were only
+        # range-checked inside an isinstance(int) branch, so a string-typed bad
+        # value from YAML (e.g. population_size: "33") passed silently and the
+        # failure only surfaced downstream in training. Type-check them first.
         pop, mu = cma.get("population_size"), cma.get("mu")
-        if isinstance(pop, int) and pop <= 0:
+        if pop is not None and not _is_int(pop):
+            problems.append(f"sep_cmaes.population_size must be an int; got {pop!r}")
+        elif _is_int(pop) and pop <= 0:
             problems.append(f"sep_cmaes.population_size must be positive; got {pop}")
-        if isinstance(mu, int) and isinstance(pop, int) and not (0 < mu <= pop):
+        if mu is not None and not _is_int(mu):
+            problems.append(f"sep_cmaes.mu must be an int; got {mu!r}")
+        elif _is_int(mu) and _is_int(pop) and not (0 < mu <= pop):
             problems.append(f"sep_cmaes.mu ({mu}) must satisfy 0 < mu <= population_size ({pop})")
+        # sigma0 is a float; generations and m_cma are ints. Each, when present,
+        # must be numeric AND positive -- a non-numeric value is now flagged too.
         for key in ("sigma0", "generations", "m_cma"):
             v = cma.get(key)
-            if v is not None and (not _is_number(v) or v <= 0):
+            if v is None:
+                continue
+            if not _is_number(v):
+                problems.append(f"sep_cmaes.{key} must be a number; got {v!r}")
+            elif v <= 0:
                 problems.append(f"sep_cmaes.{key} must be positive; got {v!r}")
 
     session = cfg.get("session")
