@@ -173,7 +173,7 @@ def test_livecodebench_parses_via_config_name(monkeypatch):
     t = tasks[0]
     assert t.task_id == "lcb-42"
     assert t.benchmark == "livecodebench"
-    assert t.answer["tests"] == [{"input": "2 3\n", "output": "5\n"}]
+    assert t.answer["tests"] == [{"input": "2 3\n", "output": "5\n", "testtype": ""}]
     assert t.answer["fn_name"] == "solve"
     assert t.answer["starter_code"] == "def solve(): ..."
     assert t.meta["version"] == "release_v6"  # "test" -> v6
@@ -210,12 +210,12 @@ def test_livecodebench_missing_question_is_skipped_and_id_falls_back(monkeypatch
 # --------------------------------------------------------------------------- #
 def test_parse_lcb_tests_from_json_string():
     row = {"public_test_cases": json.dumps([{"input": "a", "output": "b"}])}
-    assert loaders._parse_lcb_tests(row) == [{"input": "a", "output": "b"}]
+    assert loaders._parse_lcb_tests(row) == [{"input": "a", "output": "b", "testtype": ""}]
 
 
 def test_parse_lcb_tests_from_list_with_alt_keys():
     row = {"tests": [{"stdin": "x", "expected_output": "y"}]}
-    assert loaders._parse_lcb_tests(row) == [{"input": "x", "output": "y"}]
+    assert loaders._parse_lcb_tests(row) == [{"input": "x", "output": "y", "testtype": ""}]
 
 
 def test_parse_lcb_tests_bad_json_returns_empty():

@@ -58,7 +58,12 @@ def test_evaluate_cached_uses_policy_svf():
         def decide(self, prompt, *, sample=False):
             self.calls += 1
             assert sample is False
-            return (1 if len(prompt) % 2 == 0 else 0, None)
+            # Cached pr_eval routes on the turn-1 routing transcript, not the bare
+            # question (routing_transcript wraps it in "QUERY:\n..."). Route by the
+            # question content, which survives the wrapping: "ab" -> glm-5p2 (idx 1,
+            # the correct answer here) and "abc" -> deepseek-v4-pro (idx 0, correct).
+            assert prompt.startswith("QUERY:")   # the prompt is the routing transcript
+            return (0, None) if prompt.rstrip().endswith("abc") else (1, None)
 
     policy = _FakePolicy()
     items = [
