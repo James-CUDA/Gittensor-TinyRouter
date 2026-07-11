@@ -582,20 +582,23 @@ def extract_code(text: str) -> str:
     return text.strip()
 
 
-def _coerce_test_spec(reference: object) -> tuple[list, int]:
-    """Normalize a code reference into ``(tests, timeout_s)``.
+def _coerce_test_spec(reference: object) -> tuple[list, int, str | None]:
+    """Normalize a code reference into ``(tests, timeout_s, fn_name)``.
 
     The ``Task.answer`` for code benchmarks may be:
       * a ``list`` of tests, or
-      * a ``dict`` with key ``"tests"`` and optional ``"timeout_s"``, or
+      * a ``dict`` with key ``"tests"``, optional ``"timeout_s"``, and optional
+        ``"fn_name"`` (the entry-point for LiveCodeBench *functional* tests), or
       * a JSON string encoding either of the above.
 
     Each test is one of:
       * a ``str`` of assert-based Python (executed after the candidate code), or
-      * a ``dict`` ``{"stdin": str, "expected_stdout": str}`` for I/O tests, or
+      * a ``dict`` ``{"stdin": str, "expected_stdout": str}`` for I/O tests, or a
+        ``{"input": str, "output": str, "testtype": "functional"}`` call test, or
       * a 2-tuple/list ``(stdin, expected_stdout)``.
     """
     timeout_s = 10
+    fn_name: str | None = None
     spec: object = reference
     if isinstance(spec, str):
         try:
@@ -604,6 +607,8 @@ def _coerce_test_spec(reference: object) -> tuple[list, int]:
             spec = [spec]
     if isinstance(spec, dict):
         timeout_s = int(spec.get("timeout_s", timeout_s))
+        raw_fn = spec.get("fn_name") or spec.get("func_name")
+        fn_name = str(raw_fn) if raw_fn else None
         tests = spec.get("tests", [])
     else:
         tests = spec
@@ -611,7 +616,7 @@ def _coerce_test_spec(reference: object) -> tuple[list, int]:
         tests = []
     if not isinstance(tests, list):
         tests = [tests]
-    return tests, timeout_s
+    return tests, timeout_s, fn_name
 
 
 def _check_code(candidate: str, reference: object) -> bool:
@@ -619,11 +624,13 @@ def _check_code(candidate: str, reference: object) -> bool:
     code = extract_code(candidate)
     if not code.strip():
         return False
-    tests, timeout_s = _coerce_test_spec(reference)
-    return run_pass_at_1(code, tests, timeout_s=timeout_s)
+    tests, timeout_s, fn_name = _coerce_test_spec(reference)
+    return run_pass_at_1(code, tests, timeout_s=timeout_s, fn_name=fn_name)
 
 
-def run_pass_at_1(code: str, tests: Sequence, timeout_s: int = 10) -> bool:
+def run_pass_at_1(
+    code: str, tests: Sequence, timeout_s: int = 10, *, fn_name: str | None = None
+) -> bool:
     """Execute candidate ``code`` against ``tests`` in a subprocess sandbox.
 
     The candidate code is **never** executed in-process. Each invocation writes
@@ -631,7 +638,7 @@ def run_pass_at_1(code: str, tests: Sequence, timeout_s: int = 10) -> bool:
     fresh subprocess with a wall-clock timeout. The candidate is judged to pass
     only if **every** test passes.
 
-    Two test flavors are supported (they may be mixed in one list):
+    Three test flavors are supported (they may be mixed in one list):
 
     * **assert-based** (``str``): arbitrary Python appended after the candidate
       code; a test passes if the script exits ``0`` with no exception. Use this
@@ -640,12 +647,19 @@ def run_pass_at_1(code: str, tests: Sequence, timeout_s: int = 10) -> bool:
       ``(stdin, expected_stdout)`` pair): the candidate is run as a program, fed
       ``stdin`` on standard input, and its stdout is compared (whitespace-
       trimmed per line) to ``expected_stdout``. Use this for competitive-
-      programming style benchmarks (LiveCodeBench).
+      programming style benchmarks (LiveCodeBench stdin problems).
+    * **functional** (``dict`` with ``"testtype": "functional"``): ``input`` holds
+      the call arguments (one JSON/literal value per line) and ``output`` the
+      expected return; the candidate is imported and ``fn_name`` (a top-level
+      function or a ``Solution`` method) is called with the parsed arguments, and
+      its return value is compared to the expected. Use this for LeetCode-style
+      LiveCodeBench problems, which otherwise score 0 when run as stdin/stdout.
 
     Args:
         code: Candidate Python source (already fence-stripped).
         tests: Sequence of tests as described above.
         timeout_s: Per-test wall-clock timeout in seconds.
+        fn_name: Entry-point name for functional tests (ignored otherwise).
 
     Returns:
         ``True`` iff the candidate passes all tests (and there is at least one
@@ -656,18 +670,30 @@ def run_pass_at_1(code: str, tests: Sequence, timeout_s: int = 10) -> bool:
     if not tests:
         return False
     for test in tests:
-        if not _run_one_test(code, test, timeout_s):
+        if not _run_one_test(code, test, timeout_s, fn_name=fn_name):
             return False
     return True
 
 
-def _run_one_test(code: str, test: object, timeout_s: int) -> bool:
+def _run_one_test(
+    code: str, test: object, timeout_s: int, *, fn_name: str | None = None
+) -> bool:
     """Run a single test in an isolated subprocess. Returns pass/fail."""
     stdin_data: str | None = None
     expected_stdout: str | None = None
     assert_block: str | None = None
 
     if isinstance(test, dict):
+        testtype = str(test.get("testtype", "")).strip().lower()
+        if testtype == "functional" and fn_name:
+            # LeetCode-style call test: parse args, invoke fn_name, compare return.
+            return _run_functional_test(
+                code,
+                str(test.get("input", test.get("stdin", ""))),
+                str(test.get("output", test.get("expected_stdout", ""))),
+                fn_name,
+                timeout_s,
+            )
         if (
             "stdin" in test
             or "input" in test
@@ -713,6 +739,66 @@ def _stdout_matches(got: str, expected: str) -> bool:
         ln.rstrip() for ln in expected.replace("\r\n", "\n").rstrip().split("\n")
     ]
     return got_lines == exp_lines
+
+
+def _parse_functional_value(raw: str) -> object:
+    """Parse a single LiveCodeBench functional value (a JSON or Python literal).
+
+    Functional test inputs/outputs are stored as text. Prefer JSON (the format
+    the ``code_generation_lite`` release uses), fall back to a Python literal, and
+    finally to the raw stripped string so an unparseable value still round-trips.
+    """
+    raw = raw.strip()
+    if raw == "":
+        return None
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        pass
+    try:
+        import ast
+
+        return ast.literal_eval(raw)
+    except (ValueError, SyntaxError):
+        return raw
+
+
+def _parse_functional_args(raw: str) -> list:
+    """Parse LiveCodeBench functional call arguments (one value per line)."""
+    return [
+        _parse_functional_value(line)
+        for line in str(raw).split("\n")
+        if line.strip() != ""
+    ]
+
+
+def _run_functional_test(
+    code: str, raw_input: str, raw_expected: str, fn_name: str, timeout_s: int
+) -> bool:
+    """Score one LeetCode-style functional test by calling ``fn_name``.
+
+    Arguments and the expected return are parsed on the parent side and embedded
+    into the child script as Python literals (so the child never re-parses raw
+    text). The child resolves ``fn_name`` as a top-level function or a
+    ``Solution`` method, calls it with the parsed arguments, and asserts the
+    return equals the expected value; the process exits ``0`` iff it matches.
+    """
+    args = _parse_functional_args(raw_input)
+    expected = _parse_functional_value(raw_expected)
+    harness = (
+        f"\n\n_args = {args!r}\n"
+        f"_expected = {expected!r}\n"
+        f"_name = {str(fn_name)!r}\n"
+        "if _name in globals() and callable(globals()[_name]):\n"
+        "    _fn = globals()[_name]\n"
+        "elif 'Solution' in globals() and hasattr(Solution, _name):\n"
+        "    _fn = getattr(Solution(), _name)\n"
+        "else:\n"
+        "    raise SystemExit('functional entry point not found: ' + _name)\n"
+        "_got = _fn(*_args)\n"
+        "assert _got == _expected, 'got %r, expected %r' % (_got, _expected)\n"
+    )
+    return _exec_script(code + harness, stdin_data="", timeout_s=timeout_s)
 
 
 def _sandbox_env() -> dict[str, str]:
