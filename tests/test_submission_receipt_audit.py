@@ -1,4 +1,4 @@
-"""Offline tests for CMA-ES receipt audit and SVF training-signal gates (9–10)."""
+"""Offline tests for CMA-ES receipt audit (gate 9) and SVF advisories."""
 from __future__ import annotations
 
 import numpy as np
@@ -81,7 +81,7 @@ def test_validate_receipt_cmaes_rejects_generations_history_drift():
 
 
 # --------------------------------------------------------------------------- #
-# SVF training signal (gate 10)
+# SVF training signal (advisory — warns, does not reject)
 # --------------------------------------------------------------------------- #
 def test_validate_svf_training_signal_accepts_adapted_svf():
     svf = _trained_svf()
@@ -95,7 +95,7 @@ def test_validate_svf_training_signal_ignores_low_fitness():
     assert validate_svf_training_signal(svf, receipt) is None
 
 
-def test_validate_svf_training_signal_rejects_identity_svf_with_high_fitness():
+def test_validate_svf_training_signal_flags_identity_svf_with_high_fitness():
     svf = np.ones(_N_SVF, dtype=np.float32)
     receipt = _base_receipt(best_fitness=0.72)
     err = validate_svf_training_signal(svf, receipt)
@@ -121,9 +121,14 @@ def test_svf_training_signal_audit_rejects_near_identity_fraction():
 
 
 def test_preflight_receipt_audit_integration_with_manifest(tmp_path):
-    """End-to-end: pack with manifest + adapted SVF passes receipt gates."""
+    """End-to-end: pack with manifest + adapted SVF passes all hard gates."""
     from trinity.submission.manifest import build_submission_manifest, MANIFEST_FILENAME
-    from trinity.submission.gates import run_offline_gates, PreflightContext
+    from trinity.submission.gates import (
+        OFFLINE_ADVISORIES,
+        run_offline_advisories,
+        run_offline_gates,
+        PreflightContext,
+    )
     from trinity.submission.pack import load_submission_pack
     import json
     from pathlib import Path
@@ -146,4 +151,36 @@ def test_preflight_receipt_audit_integration_with_manifest(tmp_path):
     )
     results = run_offline_gates(pack, ctx)
     assert all(r.ok for r in results)
-    assert [r.gate for r in results][-3:] == ["artifact_manifest", "receipt_cmaes", "svf_training_signal"]
+    assert [r.gate for r in results][-2:] == ["artifact_manifest", "receipt_cmaes"]
+    advisories = run_offline_advisories(pack, ctx)
+    assert len(advisories) == len(OFFLINE_ADVISORIES)
+    assert not any(a.triggered for a in advisories)
+
+
+def test_identity_svf_passes_gates_but_triggers_advisory(tmp_path):
+    """Warm-start path: identity SVF + high fitness is valid (advisory only)."""
+    from trinity.submission.manifest import build_submission_manifest, MANIFEST_FILENAME
+    from trinity.submission.gates import run_offline_advisories, run_offline_gates, PreflightContext
+    from trinity.submission.pack import load_submission_pack
+    import json
+
+    subs = tmp_path / "submissions"
+    pack_dir = subs / "warm" / "1"
+    pack_dir.mkdir(parents=True)
+    np.save(pack_dir / "head_weights.npy", np.random.default_rng(2).normal(0, 0.05, (6, 1024)).astype(np.float32))
+    np.save(pack_dir / "svf_scales.npy", np.ones(_N_SVF, dtype=np.float32))
+    (pack_dir / "receipt.json").write_text(json.dumps(_base_receipt(best_fitness=0.72)), encoding="utf-8")
+    manifest = build_submission_manifest(pack_dir, miner="warm", generation=1, benchmark="math500")
+    (pack_dir / MANIFEST_FILENAME).write_text(json.dumps(manifest), encoding="utf-8")
+
+    pack = load_submission_pack(pack_dir, submissions_root=subs)
+    assert pack is not None
+    ctx = PreflightContext(
+        benchmark="math500",
+        leaderboard={"benchmarks": {}},
+        submissions_root=subs,
+    )
+    assert all(r.ok for r in run_offline_gates(pack, ctx))
+    triggered = [a for a in run_offline_advisories(pack, ctx) if a.triggered]
+    assert len(triggered) == 1
+    assert triggered[0].advisory == "svf_training_signal"

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Run offline anti-cheat gates on a routing-head submission before opening a PR.
 
-Mirrors ``scripts/pr_eval.py`` gates 1–10 (rate limit, weights, duplicate,
+Mirrors ``scripts/pr_eval.py`` gates 1–9 (rate limit, weights, duplicate,
 receipt plausibility, ledger/receipt cost consistency, pack schema,
-theta integrity, artifact manifest, CMA-ES receipt audit, SVF training
-signal) with **no GPU** and **no OpenRouter API** calls. Use this
+theta integrity, artifact manifest, CMA-ES receipt audit) with **no GPU**
+and **no OpenRouter API** calls. The SVF training-signal check is a
+non-blocking advisory. Use this
 after ``pack_submission.py`` to catch rejections locally.
 
 Usage::

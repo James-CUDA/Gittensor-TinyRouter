@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import Any
 
 from trinity.submission.gates import (
+    AdvisoryResult,
     GateResult,
     PreflightContext,
+    run_offline_advisories,
     run_offline_gates,
 )
 from trinity.submission.pack import SubmissionPack, load_submission_pack
@@ -23,6 +25,7 @@ class PreflightReport:
     pack: SubmissionPack
     benchmark: str
     results: list[GateResult] = field(default_factory=list)
+    advisories: list[AdvisoryResult] = field(default_factory=list)
 
     @property
     def passed(self) -> bool:
@@ -43,8 +46,13 @@ class PreflightReport:
             status = "PASS" if result.ok else "FAIL"
             detail = "" if result.ok else f" — {result.reason}"
             lines.append(f"  [{status}] {result.gate}{detail}")
+        for advisory in self.advisories:
+            if advisory.triggered:
+                lines.append(f"  [WARN] {advisory.advisory} — {advisory.message}")
         if self.passed:
             lines.append("All offline gates passed.")
+            if any(a.triggered for a in self.advisories):
+                lines.append("Advisories reported (non-blocking).")
         return lines
 
 
@@ -94,7 +102,13 @@ class PreflightRunner:
         # Local preflight surfaces ALL problems at once (a miner fixes their
         # submission before opening a PR); pr_eval's scoring path stays fail-fast.
         results = run_offline_gates(pack, ctx, collect_all=True)
-        return PreflightReport(pack=pack, benchmark=self.benchmark, results=results)
+        advisories = run_offline_advisories(pack, ctx) if results and all(r.ok for r in results) else []
+        return PreflightReport(
+            pack=pack,
+            benchmark=self.benchmark,
+            results=results,
+            advisories=advisories,
+        )
 
 
 def load_leaderboard_json(repo_root: Path) -> dict[str, Any]:

@@ -86,12 +86,11 @@ def test_pack_schema_validator_requires_generation_field_per_history_row():
 
 def test_offline_gates_include_schema_theta_manifest_and_receipt_audit():
     names = [gate.name for gate in OFFLINE_GATES]
-    assert names[-5:] == [
+    assert names[-4:] == [
         "pack_schema",
         "theta_integrity",
         "artifact_manifest",
         "receipt_cmaes",
-        "svf_training_signal",
     ]
 
 

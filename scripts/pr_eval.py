@@ -5,7 +5,7 @@ This is the maintainer's tool. It evaluates a miner's submitted routing head
 against the HIDDEN benchmark (stored OUTSIDE the repo — never committed) and
 determines whether the head beats the current best accuracy.
 
-All 8 anti-cheat gates run BEFORE any GPU work or API calls. A failing gate
+All 9 anti-cheat gates run BEFORE any GPU work or API calls. A failing gate
 rejects the submission immediately with zero cost to the maintainer.
 
 Usage:
@@ -56,9 +56,11 @@ from trinity.submission.gates import (
     validate_theta_integrity,
     validate_artifact_manifest,
     validate_receipt_cmaes,
-    validate_svf_training_signal,
+    run_offline_advisories,
     validate_weights as _validate_weights,
+    PreflightContext,
 )
+from trinity.submission.pack import SubmissionPack
 
 # Back-compat aliases for tests that import pr_eval directly.
 _EXPECTED_HEAD_PARAMS = 6144
@@ -540,14 +542,26 @@ async def evaluate_pr(pr_number: int, benchmark: str,
     if err:
         return _reject(err)
 
-    # ══════════════════════════════════════════════════════════════
-    # GATE 10: SVF training-signal plausibility (offline)
-    # ══════════════════════════════════════════════════════════════
-    err = validate_svf_training_signal(svf_scales, receipt)
-    if err:
-        return _reject(err)
+    print("[pr_eval] All 9 pre-eval gates passed ✓")
 
-    print("[pr_eval] All 10 pre-eval gates passed ✓\n")
+    advisory_pack = SubmissionPack(
+        path=sub_dir,
+        miner=miner_name,
+        generation=generation,
+        head_weights=head_W,
+        svf_scales=svf_scales,
+        receipt=receipt,
+    )
+    advisory_ctx = PreflightContext(
+        benchmark=benchmark,
+        leaderboard=lb,
+        submissions_root=submissions_root,
+        ledger_path=ledger_path,
+    )
+    for advisory in run_offline_advisories(advisory_pack, advisory_ctx):
+        if advisory.triggered:
+            print(f"[pr_eval] ADVISORY {advisory.advisory}: {advisory.message}")
+    print()
 
     # ══════════════════════════════════════════════════════════════
     # Load benchmark + encoder (GPU work starts here)

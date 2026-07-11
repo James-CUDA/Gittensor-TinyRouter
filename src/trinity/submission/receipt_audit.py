@@ -1,7 +1,8 @@
-"""CMA-ES receipt plausibility and SVF training-signal checks (gates 9–10).
+"""CMA-ES receipt plausibility checks (gate 9) and SVF training-signal advisories.
 
-These gates catch fabricated training metadata and identity SVF packs that claim
-high fitness — offline, with no GPU or OpenRouter calls.
+Gate 9 (``receipt_cmaes``) is a hard offline check. ``svf_training_signal`` is
+**advisory only** — warm-start preserves SVF at identity while the head learns,
+so identity SVF with high fitness is a valid submission path (#199 review).
 """
 from __future__ import annotations
 
@@ -84,7 +85,11 @@ class ReceiptCmaesAudit:
 
 @dataclass(frozen=True)
 class SvfTrainingSignalAudit:
-    """Reject high-fitness packs whose SVF block never left the CMA-ES initial mean."""
+    """Advisory: flag high-fitness packs whose SVF block stayed at identity.
+
+    Not used as a hard gate — ``warmstart.py`` legitimately keeps SVF at 1.0
+    while CMA-ES learns the head first.
+    """
 
     fitness_threshold: float = _SVF_IDENTITY_FITNESS_THRESHOLD
     min_nonidentity_fraction: float = _SVF_MIN_NONIDENTITY_FRACTION
@@ -131,5 +136,5 @@ def validate_svf_training_signal(
     svf_scales: np.ndarray,
     receipt: Mapping[str, Any],
 ) -> str | None:
-    """Gate 10: high-fitness packs must show plausible SVF adaptation."""
+    """Advisory: surface SVF adaptation hints (never a hard rejection)."""
     return SvfTrainingSignalAudit().validate(svf_scales, receipt)

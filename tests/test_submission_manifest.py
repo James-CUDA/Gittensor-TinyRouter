@@ -145,9 +145,9 @@ def test_manifest_builder_raises_when_artifact_missing(tmp_path: Path):
         ManifestBuilder(miner="x", generation=1, benchmark="math500").build(pack_dir)
 
 
-def test_offline_gates_include_manifest_receipt_cmaes_and_svf():
+def test_offline_gates_include_manifest_and_receipt_cmaes():
     names = [gate.name for gate in OFFLINE_GATES]
-    assert names[-3:] == ["artifact_manifest", "receipt_cmaes", "svf_training_signal"]
+    assert names[-2:] == ["artifact_manifest", "receipt_cmaes"]
 
 
 def test_load_manifest_returns_none_on_bad_json(tmp_path: Path):

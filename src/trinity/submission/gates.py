@@ -1,8 +1,11 @@
-"""Offline anti-cheat gates for routing-head submissions (pr_eval gates 1–10).
+"""Offline anti-cheat gates for routing-head submissions (pr_eval gates 1–9).
 
 These checks run with no GPU and no OpenRouter calls. ``scripts/pr_eval.py``
 imports this module; miners can run the same logic locally via
 ``scripts/preflight_submission.py`` before opening a PR.
+
+``svf_training_signal`` is an **advisory** only (warns, never rejects) — see #199
+review: warm-start keeps SVF at identity while the head learns.
 """
 from __future__ import annotations
 
@@ -48,9 +51,12 @@ __all__ = [
     "validate_artifact_manifest",
     "validate_receipt_cmaes",
     "validate_svf_training_signal",
+    "AdvisoryResult",
     "OFFLINE_GATES",
+    "OFFLINE_ADVISORIES",
     "run_gate",
     "run_offline_gates",
+    "run_offline_advisories",
 ]
 
 
@@ -65,6 +71,18 @@ class GateResult:
     @property
     def failed(self) -> bool:
         return not self.ok
+
+
+@dataclass(frozen=True)
+class AdvisoryResult:
+    """Non-blocking provenance hint surfaced as a warning, not a rejection."""
+
+    advisory: str
+    message: str | None = None
+
+    @property
+    def triggered(self) -> bool:
+        return self.message is not None
 
 
 @dataclass
@@ -462,10 +480,10 @@ def _gate_receipt_cmaes(pack: SubmissionPack, ctx: PreflightContext) -> Optional
     return validate_receipt_cmaes(pack.receipt)
 
 
-def _gate_svf_training_signal(pack: SubmissionPack, ctx: PreflightContext) -> Optional[str]:
+def _advisory_svf_training_signal(pack: SubmissionPack, ctx: PreflightContext) -> Optional[str]:
     del ctx
     if not pack.receipt:
-        return "receipt_missing"
+        return None
     return validate_svf_training_signal(pack.svf_scales, pack.receipt)
 
 
@@ -479,7 +497,10 @@ OFFLINE_GATES: tuple[SubmissionGate, ...] = (
     SubmissionGate("theta_integrity", _gate_theta_integrity),
     SubmissionGate("artifact_manifest", _gate_artifact_manifest),
     SubmissionGate("receipt_cmaes", _gate_receipt_cmaes),
-    SubmissionGate("svf_training_signal", _gate_svf_training_signal),
+)
+
+OFFLINE_ADVISORIES: tuple[SubmissionGate, ...] = (
+    SubmissionGate("svf_training_signal", _advisory_svf_training_signal),
 )
 
 
@@ -516,3 +537,17 @@ def run_offline_gates(
         if result.failed and not collect_all:
             break
     return results
+
+
+def run_offline_advisories(
+    pack: SubmissionPack,
+    ctx: PreflightContext,
+    *,
+    advisories: tuple[SubmissionGate, ...] = OFFLINE_ADVISORIES,
+) -> list[AdvisoryResult]:
+    """Run non-blocking provenance hints (warnings only, never reject)."""
+    out: list[AdvisoryResult] = []
+    for advisory in advisories:
+        message = advisory._check(pack, ctx)
+        out.append(AdvisoryResult(advisory=advisory.name, message=message))
+    return out
