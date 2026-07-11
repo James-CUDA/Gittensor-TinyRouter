@@ -18,6 +18,69 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-07-11 — Novelty scored identical heads as maximally novel after a JSON round-trip  #mistake #decision
+
+**Context:** reading `novelty.normalize_decision` in the new novelty/routing-diversity analysis
+(issue #164).
+**Expected:** a routing decision persisted to JSON and reloaded compares equal to the live
+`(agent, role)` tuple — the function's docstring says the key "round-trips through JSON."
+**Actual:** it didn't. A normalized tuple key serialized to JSON reloads as a **list** (JSON has no
+tuple type), and `normalize_decision` only branched on `tuple` — a list fell through to
+`str([...])`, a different key. Two identical heads (one live tuples, one JSON-loaded lists) scored
+0.0 agreement / **1.0 novelty**.
+**Root cause:** `isinstance(decision, tuple)` misses the `list` shape that every pair takes after a
+JSON round-trip, so the element-wise enum→name normalization never ran and the whole list was
+stringified.
+**Fix / decision:** branch on `(tuple, list)` and normalize element-wise to a tuple, so a
+JSON-loaded `[0, "WORKER"]` becomes `(0, "WORKER")` and matches the live tuple. `[OUR CHOICE]`
+always return a tuple key (not a list) so the key stays hashable and stable across the round-trip.
+Novelty is 5% of the composite score and the reference is the king's persisted decisions, so a
+head that routes identically to the king was being handed full novelty credit it did not earn.
+**Follow-up:** the `reference is None` branch of `novelty_report` still returns `n_agree=0`
+alongside `agreement_rate=0.5`, which is internally inconsistent for any JSON consumer that
+recomputes agreement from `n_agree/n_questions`; harmless to the scalar novelty but worth
+tidying separately.
+
+## 2026-07-10 — Rate-limit gate self-rejected a re-run of the same PR  #mistake #decision
+
+**Context:** reading the anti-cheat Gate 1 (`submission/gates.check_rate_limit`, called by
+`scripts/pr_eval.py`) after the submission-gate extraction (issue #144).
+**Expected:** the maintainer can re-run `pr_eval` on a PR (a CI retry, or after a transient
+GPU/API failure during live scoring) without it counting as a second submission.
+**Actual:** `_record_attempt` consumes the weekly slot the moment Gate 1 passes ("so rejected
+attempts still count — miners can't probe weekly"). On a re-run, `check_rate_limit` counted that
+already-recorded attempt for the SAME PR (recent = 1 >= max 1) and rejected the PR as
+`rate_limited`. A transient infra failure permanently burned a legitimate miner's slot AND
+bounced their submission.
+**Root cause:** `check_rate_limit` counted every attempt by the miner in the window with no
+notion of "the PR currently under evaluation", even though each attempt already records its `pr`.
+**Fix / decision:** thread the current PR number into `check_rate_limit` and skip attempts whose
+`pr` equals it — a re-eval of one PR no longer counts against itself, while a DISTINCT PR still
+does (anti-probe intent preserved). `_record_attempt` is now idempotent per PR so re-runs don't
+bloat the ledger either. `[OUR CHOICE]` an attempt with no recorded `pr` still counts (it can't be
+proven to be the same PR); `current_pr=None` (local preflight, no PR yet) preserves the old
+count-everything behaviour so a miner sees their true status.
+**Follow-up:** the slot is still consumed on the *first* Gate-1 pass regardless of whether live
+eval ever completes; if an eval reliably dies before producing a score, that PR's slot is spent
+until it either succeeds on re-run or the week rolls over. Acceptable given the anti-probe goal,
+but worth revisiting if infra flakiness makes it common.
+
+## 2026-07-10 — Preflight gates 1–5 did not catch receipt schema drift or theta layout corruption  #finding #decision
+**Context:** extending ``trinity.submission`` after #104 merged the offline preflight CLI.
+**Expected:** miners discover wrong ``receipt.json`` benchmark fields or hand-edited
+weight packs before opening a PR.
+**Actual:** gates 1–5 checked rate limits, weight magnitudes, duplicates, receipt
+plausibility, and ledger/receipt cost — but not whether the receipt's
+``benchmark`` / ``pool_models`` / ``n_total`` matched the submission context, or
+whether ``head_weights.npy`` + ``svf_scales.npy`` round-tripped through the
+canonical ``coordinator.params`` θ layout.
+**Fix / decision:** add gate 6 (``pack_schema``) and gate 7 (``theta_integrity``)
+in ``trinity.submission.schema``, wire them into ``OFFLINE_GATES``,
+``scripts/preflight_submission.py``, and ``scripts/pr_eval.py`` before any GPU
+work. Document the seven-gate flow in ``SUBMITTING.md``. Covered by
+``tests/test_submission_schema.py``.
+**Follow-up:** none.
+
 ## 2026-07-10 — The hidden-benchmark build accepted toy data, then died pointing elsewhere  #mistake #gotcha #repro
 **Context:** #73 fixed MMLU's `train` split and wired `ToyFallbackWarning` into `load_split`. Checking what the *hidden-benchmark builder* does when that warning fires.
 **Expected:** `build_benchmark.py` refuses to seal a benchmark whose questions came from the 2-item offline toy set.
@@ -48,6 +111,25 @@ but the audit script kept the old shared-rng form.
 t.task_id)` per trajectory. Covered by `tests/test_audit_random_routing_seed.py`.
 **Follow-up:** the audit "held-out" guarantee is soft (samples train w/ a diff seed,
 not a provably-disjoint partition) — a larger, separate change.
+
+## 2026-07-10 — Miners had no offline path to run pr_eval gates before opening a PR  #finding #decision
+**Context:** routing-head submissions were rejected only after opening a PR, when
+``scripts/pr_eval.py`` ran gates 1–4 embedded in an 850-line maintainer script.
+**Expected:** the same anti-cheat checks (rate limit, weights, duplicate head,
+receipt plausibility) runnable locally with no GPU and no OpenRouter spend.
+**Actual:** gate logic was not importable; miners discovered failures post-PR. A
+fifth gap also existed: ``receipt.json`` ``total_cost_usd`` was never
+cross-checked against a verified ``TRINITY_COST_LEDGER`` total, so fabricated
+receipts could disagree with the append-only ledger.
+**Fix / decision:** add ``trinity.submission`` (pack loader, gate classes,
+``PreflightRunner``) plus ``scripts/preflight_submission.py`` for miners.
+``pr_eval.py`` now imports the shared gates and runs gate 5
+(ledger/receipt cost consistency) before any GPU work. Shared OpenRouter pricing
+lives in ``trinity.llm.openrouter_pricing`` so ``cost_report.py``,
+``pack_submission.py``, and the new gate agree on dollar totals. Covered by
+``tests/test_submission_preflight.py``.
+**Follow-up:** wire the preflight CLI into CONTRIBUTING/SUBMITTING docs when the
+maintainer is ready to advertise it.
 
 ## 2026-07-10 — A null `usage` block crashed a successful inference call  #mistake #gotcha
 **Context:** hardening `llm/openrouter_client.py` after #72 fixed the `content: null` case, to see whether the same present-but-null trap existed elsewhere in the response parsing.
