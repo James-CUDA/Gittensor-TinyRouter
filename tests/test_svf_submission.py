@@ -56,9 +56,12 @@ def test_evaluate_cached_uses_policy_svf():
             self.calls = 0
 
         def decide(self, prompt, *, sample=False):
+            # _evaluate_cached routes on routing_transcript(prompt) (turn-1
+            # coordinator input), not the bare prompt, so match on the embedded
+            # query text: item "abc" -> worker 0, item "ab" -> worker 1.
             self.calls += 1
             assert sample is False
-            return (1 if len(prompt) % 2 == 0 else 0, None)
+            return (0, None) if "abc" in prompt else (1, None)
 
     policy = _FakePolicy()
     items = [
