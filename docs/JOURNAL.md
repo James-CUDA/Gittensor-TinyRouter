@@ -27,17 +27,38 @@ catch "an unscoreable item that still counts toward the denominator".
 **Actual:** the prompt was read as `it.get("question_text", "")`, whose `""` default only applies
 when the key is ABSENT. A present `question_text: None` returned `None`, and `str(None)` is the
 truthy `"None"`: so `missing_prompt` stayed 0, and two None items both normalized to `"none"` and
-were reported as a `duplicate_questions`. Reproduced offline: two `{"question_text": None}` items →
+were reported as a `duplicate_questions`. Reproduced offline: two `{"question_text": None}` items ->
 `missing_prompt=0, duplicate_questions=1` (should be `2, 0`).
 **Root cause:** `dict.get(k, default)` returns a stored `None` rather than the default. The sibling
 `correct_answer` check on the same loop already guards `if ref is None or ...`, so the prompt path
 was inconsistent with the answer path.
-**Fix / decision:** read the prompt as `it.get("question_text") or ""` in all three spots (the
-duplicate-text counter, its filter, and the missing-prompt check), so `None` is treated as blank
-exactly like `""` and like the answer path. Added `tests/test_dataset_quality_none_prompt.py`
-(pure, no torch): None → missing not duplicate, None matches empty-string, a real duplicate is still
-caught alongside None items, None prompt+answer counted on independent axes. Fixes #225.
+**Fix / decision:** read the prompt as `it.get("question_text") or ""` in all three spots, so `None`
+is treated as blank exactly like `""` and like the answer path. Added
+`tests/test_dataset_quality_none_prompt.py`. Fixes #225.
 **Follow-up:** none.
+
+## 2026-07-11 — verify_benchmark crashed on the missing-manifest case it exists to report  #mistake #gotcha #repro
+
+**Context:** reading the new `scripts/verify_benchmark.py` CLI (the offline hidden-benchmark
+integrity verifier, #174).
+**Expected:** `verify_benchmark.py --dir <build>` reports every integrity problem — including the
+most basic one, a build with no `meta.json` — as a clean `FAIL [...] — N problem(s)` report and
+`exit 1`. `verify_dir` is written for exactly this: it returns `["missing meta.json"]` early.
+**Actual:** `main()` re-read `meta.json` unconditionally right after `verify_dir` and BEFORE the
+`if problems:` block (`meta = json.loads((Path(args.dir)/"meta.json").read_text())`). On a build
+missing the manifest, that line raised an uncaught `FileNotFoundError` traceback; the intended
+`FAIL — missing meta.json` report was never printed. Reproduced offline with an empty dir + dummy
+`BENCHMARK_PASSWORD` (crashes before any AES-GCM decryption).
+**Root cause:** `meta` is only consumed in the success branch (the `OK [...]` line and `--append`),
+but it was read eagerly on the failure path too, defeating `verify_dir`'s clean missing-manifest
+handling.
+**Fix / decision:** track only `meta_path` per mode and defer the `meta` read to after the
+`if problems:` block, where verification has passed so the file exists and is well-formed. Added
+`tests/test_verify_benchmark_main.py` driving `main()` (the pure helpers were already covered but
+`main()` never was): missing-meta → clean FAIL+exit 1 (regression guard), `--dir` without password
+→ exit 2, no mode → exit 2, inconsistent `--meta` → FAIL+exit 1. Fixes #191.
+**Follow-up:** none — the `--meta` branch is unchanged in practice (`verify_meta_file` reads that
+path first anyway).
 
 ## 2026-07-11 — pack_submission generation auto-detect overwrote an existing generation  #mistake #gotcha #repro
 
