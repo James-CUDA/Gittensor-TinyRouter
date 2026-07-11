@@ -23,7 +23,7 @@ sys.path.insert(0, str(_REPO / "src"))
 sys.path.insert(0, str(_REPO / "scripts"))
 
 import pr_eval  # noqa: E402
-from trinity.types import Task, Trajectory, TurnRecord  # noqa: E402
+from trinity.types import Trajectory, TurnRecord  # noqa: E402
 
 _POOL = ["deepseek-v4-pro", "glm-5p2", "kimi-k2p6"]
 _GOLD = "diff --git a/f b/f\n@@ -1 +1 @@\n-x\n+y\n"
