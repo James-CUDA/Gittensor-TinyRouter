@@ -414,6 +414,36 @@ def extract_last_number(text: str) -> str | None:
     return matches[-1].replace(",", "").replace(" ", "")
 
 
+_FONT_COMMANDS = ("text", "mathrm", "mathbf", "mathit", "mathsf", "mathtt", "boldsymbol")
+_FONT_OPEN_RE = re.compile(r"\\(?:" + "|".join(_FONT_COMMANDS) + r")\s*\{")
+
+
+def _unwrap_font_commands(s: str) -> str:
+    r"""Strip LaTeX font/style wrappers, keeping their (possibly braced) content.
+
+    ``\mathbf{5}`` -> ``5``. Unlike a single-level ``\{([^{}]*)\}`` regex, this
+    matches the *balanced* closing brace, so a wrapper around a fraction, root, or
+    another font command (``\mathbf{\frac{1}{2}}``, ``\boldsymbol{\sqrt{2}}``,
+    ``\mathbf{\mathrm{5}}``) unwraps correctly instead of being left intact. The
+    fixpoint loop peels nested wrappers; an unbalanced wrapper is left untouched so
+    malformed input is never corrupted.
+    """
+    while True:
+        m = _FONT_OPEN_RE.search(s)
+        if m is None:
+            return s
+        depth, i = 1, m.end()
+        while i < len(s) and depth:
+            if s[i] == "{":
+                depth += 1
+            elif s[i] == "}":
+                depth -= 1
+            i += 1
+        if depth:  # unbalanced — leave the string as-is
+            return s
+        s = s[: m.start()] + s[m.end() : i - 1] + s[i:]
+
+
 def normalize_math_answer(ans: str | None) -> str:
     r"""Normalize a math answer string for robust comparison.
 
@@ -444,12 +474,9 @@ def normalize_math_answer(ans: str | None) -> str:
     # Unwrap LaTeX font/style commands to their content. These change only how the
     # answer looks, not its value, so \mathbf{5} must normalize to 5 exactly as
     # \text{5}/\mathrm{5} already do (otherwise a bold-formatted answer is a false
-    # negative against a plain reference).
-    s = re.sub(
-        r"\\(?:text|mathrm|mathbf|mathit|mathsf|mathtt|boldsymbol)\s*\{([^{}]*)\}",
-        r"\1",
-        s,
-    )
+    # negative against a plain reference). Balanced-brace so a bold fraction/root
+    # (\mathbf{\frac{1}{2}}) unwraps, not just brace-free payloads.
+    s = _unwrap_font_commands(s)
     s = s.replace(r"\%", "").replace("%", "")
     # Degree symbol in either brace form: ``^\circ`` and ``^{\circ}``. The braced
     # form is common LaTeX and was previously left intact, so ``90^{\circ}`` never

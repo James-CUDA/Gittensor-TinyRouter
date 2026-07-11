@@ -18,6 +18,27 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-07-11 — Bold-wrapped fractions scored wrong: font unwrap missed braced payloads  #mistake #decision
+
+**Context:** reading the LaTeX font-command unwrap in `normalize_math_answer` added by #182
+(issue #205).
+**Expected:** a font wrapper changes only how an answer looks, so `\mathbf{\frac{1}{2}}` scores
+equal to a plain `1/2` — the fix's own stated goal.
+**Actual:** it scored 0. The unwrap regex `\\(?:...|mathbf|...)\s*\{([^{}]*)\}` uses `[^{}]*`, which
+can only match a payload with no braces. A bold fraction, root, or nested font command
+(`\mathbf{\frac{1}{2}}`, `\boldsymbol{\sqrt{2}}`, `\mathbf{\mathrm{5}}`) was left wrapped, and the
+downstream `\frac`→`(a)/(b)` rule then produced `\mathbf{(1)/(2)}`, which never matched `1/2`.
+**Root cause:** a single-level character-class regex cannot span nested braces; the shipped tests
+only covered brace-free payloads (`\mathbf{5}`), so the gap was invisible.
+**Fix / decision:** replace the regex with `_unwrap_font_commands`, a balanced-brace scan run to a
+fixpoint (peels nested wrappers), leaving an unbalanced wrapper untouched so malformed input is
+never corrupted — the same balanced-brace approach `extract_boxed` already uses. Cached
+single-turn accuracy is 70% of the composite, and `\frac` is one of the most common math
+constructs, so a bold fraction being marked wrong is a real leaderboard-affecting miss, not an
+edge case.
+**Follow-up:** none — `\text`/`\mathrm` (the originally-supported commands) go through the same
+path now, and their brace-free cases stay covered by the existing regression tests.
+
 ## 2026-07-11 — Novelty scored identical heads as maximally novel after a JSON round-trip  #mistake #decision
 
 **Context:** reading `novelty.normalize_decision` in the new novelty/routing-diversity analysis
