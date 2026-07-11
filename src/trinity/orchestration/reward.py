@@ -404,8 +404,15 @@ def normalize_math_answer(ans: str | None) -> str:
     # and turns a correct dollar answer into a false negative.
     for tok in (r"\$", "$", r"\left", r"\right", r"\!", r"\,", r"\;", r"\:", r"\(", r"\)"):
         s = s.replace(tok, "")
-    s = re.sub(r"\\text\s*\{([^{}]*)\}", r"\1", s)
-    s = re.sub(r"\\mathrm\s*\{([^{}]*)\}", r"\1", s)
+    # Unwrap LaTeX font/style commands to their content. These change only how the
+    # answer looks, not its value, so \mathbf{5} must normalize to 5 exactly as
+    # \text{5}/\mathrm{5} already do (otherwise a bold-formatted answer is a false
+    # negative against a plain reference).
+    s = re.sub(
+        r"\\(?:text|mathrm|mathbf|mathit|mathsf|mathtt|boldsymbol)\s*\{([^{}]*)\}",
+        r"\1",
+        s,
+    )
     s = s.replace(r"\%", "").replace("%", "")
     # Degree symbol in either brace form: ``^\circ`` and ``^{\circ}``. The braced
     # form is common LaTeX and was previously left intact, so ``90^{\circ}`` never
