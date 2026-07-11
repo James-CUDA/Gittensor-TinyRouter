@@ -186,7 +186,8 @@ def main() -> None:
 
     # Only reached on success, where meta.json is guaranteed present and parseable
     # (verify_dir / verify_meta_file would have reported otherwise) — so this read
-    # is safe and never re-crashes the way an unconditional read did.
+    # is safe and never re-crashes the way an unconditional read did. Uses the same
+    # _load_meta helper as the verification paths for consistency.
     meta, _ = _load_meta(meta_path)
     meta = meta or {}
     print(f"OK [{mode}] — {meta.get('benchmark')} verified, hash {meta.get('content_hash')}")
