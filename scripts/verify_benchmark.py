@@ -74,7 +74,16 @@ def load_splits(bench_dir: str | Path, password: str) -> tuple[dict[str, list], 
             problems.append(f"missing split file {fp.name}")
             splits[name] = []
             continue
-        data = _decrypt_file(fp, password)
+        try:
+            data = _decrypt_file(fp, password)
+        except Exception as exc:  # noqa: BLE001 — any decrypt/parse failure IS a problem
+            # A wrong password or a tampered/corrupt ciphertext raises here (AES-GCM
+            # InvalidTag, bad base64, bad JSON, ...). Record it and keep going, per
+            # this function's contract, so the verifier reports FAIL instead of dying
+            # with a traceback on exactly the tamper case it exists to catch.
+            problems.append(f"{fp.name}: decryption failed ({type(exc).__name__})")
+            splits[name] = []
+            continue
         items = list(data.get("items") or [])
         splits[name] = items
         if data.get("seed") != protocol.SEALED_SEED:
@@ -84,13 +93,26 @@ def load_splits(bench_dir: str | Path, password: str) -> tuple[dict[str, list], 
     return splits, problems
 
 
+def _load_meta(meta_path: Path) -> tuple[dict | None, str | None]:
+    """Read a meta.json -> ``(meta, problem)``. Never raises on missing/corrupt input.
+
+    A deleted or tampered manifest is a verification failure to report, not a crash.
+    """
+    if not meta_path.exists():
+        return None, f"missing {meta_path.name}"
+    try:
+        return json.loads(meta_path.read_text()), None
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+        return None, f"unreadable {meta_path.name}: {type(exc).__name__}"
+
+
 def verify_dir(bench_dir: str | Path, password: str) -> list[str]:
     """Full verification of a built benchmark directory. Empty list = verified."""
     bench_dir = Path(bench_dir)
-    meta_path = bench_dir / "meta.json"
-    if not meta_path.exists():
-        return [f"missing {meta_path.name}"]
-    meta = json.loads(meta_path.read_text())
+    meta, meta_problem = _load_meta(bench_dir / "meta.json")
+    if meta_problem is not None:
+        return [meta_problem]
+    assert meta is not None  # narrowed by meta_problem is None
 
     problems: list[str] = []
     hash_path = bench_dir / "hash.txt"
@@ -110,7 +132,10 @@ def verify_dir(bench_dir: str | Path, password: str) -> list[str]:
 
 def verify_meta_file(meta_path: str | Path) -> list[str]:
     """Offline self-consistency: validate meta.json alone (no password, no questions)."""
-    meta = json.loads(Path(meta_path).read_text())
+    meta, meta_problem = _load_meta(Path(meta_path))
+    if meta_problem is not None:
+        return [meta_problem]
+    assert meta is not None  # narrowed by meta_problem is None
     return protocol.verify_meta_selfconsistent(meta)
 
 
@@ -143,11 +168,11 @@ def main() -> None:
             print("ERROR: --dir needs --password or BENCHMARK_PASSWORD")
             sys.exit(2)
         problems = verify_dir(args.dir, args.password)
-        meta = json.loads((Path(args.dir) / "meta.json").read_text())
+        meta_path = Path(args.dir) / "meta.json"
         mode = f"full: {args.dir}"
     elif args.meta:
         problems = verify_meta_file(args.meta)
-        meta = json.loads(Path(args.meta).read_text())
+        meta_path = Path(args.meta)
         mode = f"self-consistency: {args.meta}"
     else:
         print("ERROR: pass --dir <benchmark_dir> (full) or --meta <meta.json> (offline)")
@@ -159,6 +184,11 @@ def main() -> None:
             print(f"  - {p}")
         sys.exit(1)
 
+    # Only reached on success, where meta.json is guaranteed present and parseable
+    # (verify_dir / verify_meta_file would have reported otherwise) — so this read
+    # is safe and never re-crashes the way an unconditional read did.
+    meta, _ = _load_meta(meta_path)
+    meta = meta or {}
     print(f"OK [{mode}] — {meta.get('benchmark')} verified, hash {meta.get('content_hash')}")
     if args.append:
         wrote = append_hash(args.append, str(meta.get("benchmark")), str(meta.get("content_hash")))

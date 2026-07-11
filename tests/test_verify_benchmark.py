@@ -178,3 +178,56 @@ def test_full_verify_flags_count_and_seed_tamper(tmp_path):
     )
     probs = vb.verify_dir(tmp_path, "pw")
     assert any("seed" in p for p in probs) and any("count" in p for p in probs)
+
+
+# --------------------------------------------------------------------------- #
+# Tamper/corruption must be REPORTED, never crash the verifier with a traceback.
+# --------------------------------------------------------------------------- #
+def test_load_splits_reports_undecryptable_file_instead_of_crashing(tmp_path):
+    # A tampered / non-decryptable ciphertext (or a wrong password) must be a
+    # recorded problem, not an uncaught exception.
+    (tmp_path / "eval.json").write_text("!!! not valid base64 or ciphertext !!!")
+    (tmp_path / "audit.json").write_text("garbage")
+    (tmp_path / "live.json").write_text("garbage")
+    splits, problems = vb.load_splits(tmp_path, "wrongpass")
+    assert splits == {"eval": [], "audit": [], "live": []}
+    assert any("eval.json" in p and "decryption failed" in p for p in problems)
+
+
+def test_tampered_ciphertext_reports_decryption_failed(tmp_path):
+    pytest.importorskip("cryptography")
+    _write_benchmark(tmp_path, _splits(), "pw")
+    assert vb.verify_dir(tmp_path, "pw") == []
+    # Corrupt the ciphertext bytes of one split -> AES-GCM auth failure.
+    (tmp_path / "eval.json").write_text("Zm9vYmFy" * 8)  # valid base64, bogus payload
+    probs = vb.verify_dir(tmp_path, "pw")
+    assert any("eval.json" in p and "decryption failed" in p for p in probs)
+
+
+def test_wrong_password_reports_decryption_failed(tmp_path):
+    pytest.importorskip("cryptography")
+    _write_benchmark(tmp_path, _splits(), "pw")
+    probs = vb.verify_dir(tmp_path, "not-the-password")
+    assert probs and all("Traceback" not in p for p in probs)
+    assert any("decryption failed" in p for p in probs)
+
+
+def test_verify_dir_reports_missing_meta(tmp_path):
+    # No meta.json at all -> a clean "missing" problem, not a FileNotFoundError.
+    assert vb.verify_dir(tmp_path, "pw") == ["missing meta.json"]
+
+
+def test_verify_dir_reports_corrupt_meta_instead_of_crashing(tmp_path):
+    (tmp_path / "meta.json").write_text("{ this is not valid json")
+    probs = vb.verify_dir(tmp_path, "pw")
+    assert probs == ["unreadable meta.json: JSONDecodeError"]
+
+
+def test_verify_meta_file_reports_corrupt_meta(tmp_path):
+    mp = tmp_path / "meta.json"
+    mp.write_text("{ not json")
+    assert vb.verify_meta_file(mp) == ["unreadable meta.json: JSONDecodeError"]
+
+
+def test_verify_meta_file_reports_missing_meta(tmp_path):
+    assert vb.verify_meta_file(tmp_path / "nope.json") == ["missing nope.json"]

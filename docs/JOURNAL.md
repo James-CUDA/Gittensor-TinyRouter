@@ -18,6 +18,30 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-07-11 — The integrity verifier crashed on the tamper cases it exists to catch  #mistake #decision
+
+**Context:** reading `scripts/verify_benchmark.py`, the hidden-benchmark integrity verifier
+(issue #201).
+**Expected:** a tampered ciphertext, wrong password, or missing/corrupt `meta.json` produces a
+structured `FAIL — N problem(s)` and exit 1.
+**Actual:** each of those raised an uncaught traceback. `load_splits` called `_decrypt_file` with
+no guard, so an AES-GCM `InvalidTag` (tampered split or wrong `BENCHMARK_PASSWORD`) crashed the
+run — despite the docstring promising decode failures are "recorded as a problem." And `main()`
+re-read `meta.json` unconditionally right after `verify_dir` had already returned
+`["missing meta.json"]`, so a deleted/corrupt manifest died with `FileNotFoundError`/
+`JSONDecodeError` before the clean report could print.
+**Root cause:** the happy path assumed decryptable splits and a present, parseable manifest — the
+exact assumptions a tamper attack breaks.
+**Fix / decision:** wrap the decrypt in `load_splits` and record `"<file>: decryption failed"`,
+continuing so the manifest check still runs on what decoded; read `meta.json` through a
+`_load_meta -> (meta, problem)` helper used by `verify_dir`/`verify_meta_file`; and in `main()`
+read the manifest only on the success path (where it is guaranteed valid). `[OUR CHOICE]`
+`load_splits` catches broad `Exception` — any decrypt/parse failure IS a verification problem,
+and matching the tuple of concrete exception types would silently miss a new failure mode.
+**Follow-up:** `--meta --append` still writes a `content_hash` into `benchmark_hashes.txt` in
+self-consistency mode, where the hash was never recomputed from the sealed questions; `--append`
+should arguably be restricted to full `--dir` verification. Left for a separate change.
+
 ## 2026-07-11 — Novelty scored identical heads as maximally novel after a JSON round-trip  #mistake #decision
 
 **Context:** reading `novelty.normalize_decision` in the new novelty/routing-diversity analysis
