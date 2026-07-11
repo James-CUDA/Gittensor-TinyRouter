@@ -250,65 +250,73 @@ def _compute_score(hidden_acc: float, live_acc: float, avg_turns: float,
 # Gate 7: Novelty Computation
 # ==========================================================================
 
-def _compute_novelty(head, encoder, eval_items: List[dict],
-                      pool_models: List[str]) -> float:
-    """Compute novelty by comparing routing decisions against the current king.
+def _king_submission_dir(
+    benchmark: str,
+    lb: dict,
+    submissions_root: Path,
+) -> Optional[Path]:
+    """Return the reigning submission directory for ``benchmark``, if any."""
+    bench_entry = lb.get("benchmarks", {}).get(benchmark, {})
+    king_miner = bench_entry.get("best_miner")
+    king_gen = bench_entry.get("best_generation", 0)
+    if not king_miner or not king_gen:
+        return None
+    king_dir = submissions_root / str(king_miner) / str(king_gen)
+    if not (king_dir / "head_weights.npy").exists() or not (king_dir / "svf_scales.npy").exists():
+        return None
+    return king_dir
 
-    Loads the current best head from the leaderboard, runs both heads on the
-    first min(50, len(eval_items)) questions, and returns 1.0 - agreement_rate.
 
-    If there is no king yet, returns 0.5 (neutral).
-    """
-    lb = _load_leaderboard()
-    submissions_root = _REPO / "submissions"
-
-    # Find the current king
-    king_miner = None
-    king_gen = 0
-    for bench_name, bench_entry in lb.get("benchmarks", {}).items():
-        km = bench_entry.get("best_miner")
-        kg = bench_entry.get("best_generation", 0)
-        if km and kg:
-            king_miner = km
-            king_gen = kg
-            break
-
-    if not king_miner:
-        return 0.5  # no king yet — neutral novelty
-
-    king_dir = submissions_root / king_miner / str(king_gen)
-    hw_path = king_dir / "head_weights.npy"
-    if not hw_path.exists():
-        return 0.5
-
-    import torch
+def _routing_decisions(policy, items: List[dict], *, ref_count: int) -> List[tuple]:
+    """Collect turn-1 routing decisions via the configured policy."""
     from trinity.adapters.hidden_item import from_protocol_item
-    from trinity.coordinator.head import LinearHead
+    from trinity.orchestration.session import _transcript_text
+
+    decisions: List[tuple] = []
+    for item in items[:ref_count]:
+        canonical = from_protocol_item(item)
+        transcript = _transcript_text(canonical["prompt"], [])
+        agent_idx, role = policy.decide(transcript, sample=False)
+        decisions.append((agent_idx, role))
+    return decisions
+
+
+def _compute_novelty(
+    benchmark: str,
+    policy,
+    spec,
+    eval_items: List[dict],
+) -> float:
+    """Compare submitter vs benchmark king using full policy state (head + SVF).
+
+    Loads the reigning submission for the benchmark currently under evaluation
+    (not the first benchmark in leaderboard iteration order) and compares
+    turn-1 routing on the same QUERY transcript envelope training uses.
+    """
+    from trinity.novelty import NEUTRAL_NOVELTY, novelty_score
+
+    lb = _load_leaderboard()
+    king_dir = _king_submission_dir(benchmark, lb, _REPO / "submissions")
+    ref_count = min(50, len(eval_items))
+    if king_dir is None or ref_count == 0:
+        return NEUTRAL_NOVELTY
 
     try:
-        king_hw = np.load(str(hw_path))
+        king_hw = np.load(str(king_dir / "head_weights.npy"))
+        king_svf = np.load(str(king_dir / "svf_scales.npy"))
     except (ValueError, OSError):
-        return 0.5
+        return NEUTRAL_NOVELTY
 
-    king_head = LinearHead(n_a=6, d_h=1024, n_models=3).to(head.weight.device)
-    king_head.load_weight(king_hw)
+    submitter_decisions = _routing_decisions(policy, eval_items, ref_count=ref_count)
 
-    # Compare routing decisions on reference questions
-    ref_count = min(50, len(eval_items))
-    matches = 0
-    for item in eval_items[:ref_count]:
-        canonical = from_protocol_item(item)
-        h_np = encoder.encode(canonical["prompt"])
-        h_t = torch.as_tensor(np.asarray(h_np, dtype=np.float32), device=head.weight.device)
+    king_theta = np.concatenate([
+        np.asarray(king_hw, dtype=np.float64).ravel(),
+        np.asarray(king_svf, dtype=np.float64).ravel(),
+    ])
+    policy.configure(king_theta, spec)
+    king_decisions = _routing_decisions(policy, eval_items, ref_count=ref_count)
 
-        sub_agent, sub_role, _ = head.select(h_t, sample=False)
-        king_agent, king_role, _ = king_head.select(h_t, sample=False)
-
-        if sub_agent == king_agent and sub_role == king_role:
-            matches += 1
-
-    agreement = matches / ref_count if ref_count > 0 else 0.0
-    return 1.0 - agreement
+    return novelty_score(submitter_decisions, king_decisions)
 
 
 # ==========================================================================
@@ -505,8 +513,6 @@ async def evaluate_pr(pr_number: int, benchmark: str,
         np.asarray(head_W, dtype=np.float64).ravel(),
         np.asarray(svf_scales, dtype=np.float64).ravel(),
     ]), spec)
-    head = policy.head
-    encoder = policy.encoder
 
     # ---- Cached eval ----
     print("[pr_eval] Running cached eval (150 questions)...")
@@ -541,7 +547,7 @@ async def evaluate_pr(pr_number: int, benchmark: str,
     # ══════════════════════════════════════════════════════════════
     # GATE 7: Compute actual novelty
     # ══════════════════════════════════════════════════════════════
-    novelty = _compute_novelty(head, encoder, eval_items, _POOL_MODELS)
+    novelty = _compute_novelty(benchmark, policy, spec, eval_items)
     print(f"  novelty    = {novelty:.4f}")
 
     # ---- Composite score ----
