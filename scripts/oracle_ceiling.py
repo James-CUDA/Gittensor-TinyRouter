@@ -57,10 +57,9 @@ class CeilingStats:
     n_models: int
     k: int
     per_model: list[float]                 # mean_q p_hat[q, m], one per model
-    best_single: float                     # max_m per_model (full-K; per-model reporting)
+    best_single: float                     # max_m per_model (full-K reporting)
     best_single_model: int                 # argmax
-    best_single_crossfit: float            # best_single on the held-out half — same estimation
-                                           # regime as routing_oracle, which is floored at it
+    best_single_crossfit: float            # cross-fit best_single (same regime as oracle)
     routing_oracle: float                  # winner's-curse-debiased (cross-fit) when K>=2
     routing_oracle_naive: float            # mean_q max_m p_hat[q, m] (upward-biased)
     clairvoyant_any: float                 # mean_q (1 - prod_m (1 - p_hat)) — NOT achievable
@@ -250,7 +249,7 @@ def compute_stats(S: np.ndarray, *, crossfit_splits: int = 200, seed: int = 0) -
         per_model=[float(x) for x in per_model],
         best_single=bs,
         best_single_model=bs_m,
-        best_single_crossfit=bs_cf,
+        best_single_crossfit=float(bs_cf),
         routing_oracle=oracle,
         routing_oracle_naive=oracle_naive,
         clairvoyant_any=clair,
@@ -396,6 +395,8 @@ def router_gap_closed(trinity_acc: float, best_single_acc: float,
         The captured fraction, or NaN when there is no achievable headroom.
     """
     denom = routing_oracle_acc - best_single_acc
+    # Non-positive denom means no achievable headroom (undefined ratio), not a
+    # large positive capture from canceling negatives (see issue #22).
     if denom <= 1e-9:
         return float("nan")
     return float((trinity_acc - best_single_acc) / denom)
