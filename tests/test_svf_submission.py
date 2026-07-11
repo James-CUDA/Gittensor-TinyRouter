@@ -50,26 +50,29 @@ def test_extract_head_and_svf_from_theta(tmp_path):
 def test_evaluate_cached_uses_policy_svf():
     """Cached pr_eval must route via policy.decide (encoder + SVF + head)."""
     from pr_eval import _evaluate_cached
+    from trinity.orchestration.session import routing_transcript
 
     class _FakePolicy:
         def __init__(self):
-            self.calls = 0
+            self.transcripts: list[str] = []
 
-        def decide(self, prompt, *, sample=False):
-            self.calls += 1
+        def decide(self, transcript, *, sample=False):
             assert sample is False
-            return (1 if len(prompt) % 2 == 0 else 0, None)
+            self.transcripts.append(transcript)
+            # Route on QUERY-wrapped transcript parity (matches cached eval path).
+            return (1 if len(transcript) % 2 == 0 else 0, None)
 
     policy = _FakePolicy()
+    # Pick prompts so routing_transcript length parity selects the correct model.
     items = [
         {
-            "question_text": "ab",
+            "question_text": "a",
             "benchmark": "math500",
             "correct_answer": "42",
             "model_answers": {"deepseek-v4-pro": "wrong", "glm-5p2": "\\boxed{42}"},
         },
         {
-            "question_text": "abc",
+            "question_text": "ab",
             "benchmark": "math500",
             "correct_answer": "7",
             "model_answers": {"deepseek-v4-pro": "\\boxed{7}", "glm-5p2": "wrong"},
@@ -77,4 +80,8 @@ def test_evaluate_cached_uses_policy_svf():
     ]
     acc = _evaluate_cached(policy, items, ["deepseek-v4-pro", "glm-5p2", "kimi-k2p6"])
     assert acc == 1.0
-    assert policy.calls == 2
+    assert len(policy.transcripts) == 2
+    assert policy.transcripts == [
+        routing_transcript("a"),
+        routing_transcript("ab"),
+    ]
