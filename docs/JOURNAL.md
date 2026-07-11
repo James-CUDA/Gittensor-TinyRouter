@@ -42,6 +42,29 @@ flags degenerate and breaks the DoD; a 0.3→0.6→0.5 wobble does not.
 difficulty, so a trainer that ran only on an easy benchmark can outrank one that wins on every
 shared benchmark — a separate methodological fix.
 
+## 2026-07-11 — verify_benchmark crashed on the missing-manifest case it exists to report  #mistake #gotcha #repro
+
+**Context:** reading the new `scripts/verify_benchmark.py` CLI (the offline hidden-benchmark
+integrity verifier, #174).
+**Expected:** `verify_benchmark.py --dir <build>` reports every integrity problem — including the
+most basic one, a build with no `meta.json` — as a clean `FAIL [...] — N problem(s)` report and
+`exit 1`. `verify_dir` is written for exactly this: it returns `["missing meta.json"]` early.
+**Actual:** `main()` re-read `meta.json` unconditionally right after `verify_dir` and BEFORE the
+`if problems:` block (`meta = json.loads((Path(args.dir)/"meta.json").read_text())`). On a build
+missing the manifest, that line raised an uncaught `FileNotFoundError` traceback; the intended
+`FAIL — missing meta.json` report was never printed. Reproduced offline with an empty dir + dummy
+`BENCHMARK_PASSWORD` (crashes before any AES-GCM decryption).
+**Root cause:** `meta` is only consumed in the success branch (the `OK [...]` line and `--append`),
+but it was read eagerly on the failure path too, defeating `verify_dir`'s clean missing-manifest
+handling.
+**Fix / decision:** track only `meta_path` per mode and defer the `meta` read to after the
+`if problems:` block, where verification has passed so the file exists and is well-formed. Added
+`tests/test_verify_benchmark_main.py` driving `main()` (the pure helpers were already covered but
+`main()` never was): missing-meta → clean FAIL+exit 1 (regression guard), `--dir` without password
+→ exit 2, no mode → exit 2, inconsistent `--meta` → FAIL+exit 1. Fixes #191.
+**Follow-up:** none — the `--meta` branch is unchanged in practice (`verify_meta_file` reads that
+path first anyway).
+
 ## 2026-07-11 — pack_submission generation auto-detect overwrote an existing generation  #mistake #gotcha #repro
 
 **Context:** reading `scripts/pack_submission.py`'s auto-detect of the next submission generation

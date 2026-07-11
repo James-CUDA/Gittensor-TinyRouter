@@ -122,6 +122,43 @@ def test_bad_max_turns_is_flagged():
 
 
 # ---------------------------------------------------------------------------
+# Type validation: a string-typed numeric field must NOT pass silently.
+# (Maintainer review on #193: range-only checks inside isinstance branches let a
+# string value from YAML through, moving the failure downstream into training.)
+# ---------------------------------------------------------------------------
+def test_string_population_size_is_flagged():
+    cfg = _trinity(sep_cmaes={"population_size": "33", "mu": 16, "sigma0": 0.1})
+    assert any("population_size must be an int" in p for p in check_trinity_config(cfg))
+
+
+def test_string_mu_is_flagged():
+    cfg = _trinity(sep_cmaes={"population_size": 33, "mu": "sixteen", "sigma0": 0.1})
+    assert any("mu must be an int" in p for p in check_trinity_config(cfg))
+
+
+def test_string_sigma0_is_flagged_as_not_a_number():
+    cfg = _trinity(sep_cmaes={"population_size": 33, "mu": 16, "sigma0": "high"})
+    assert any("sigma0 must be a number" in p for p in check_trinity_config(cfg))
+
+
+def test_string_generations_is_flagged():
+    cfg = _trinity(sep_cmaes={"population_size": 33, "mu": 16, "sigma0": 0.1,
+                              "generations": "sixty"})
+    assert any("generations must be a number" in p for p in check_trinity_config(cfg))
+
+
+def test_string_head_count_is_flagged():
+    cfg = _trinity(coordinator={"head": {"n_a": "six", "n_models": 3, "n_roles": 3},
+                                "svf": {"enabled": False}})
+    assert any("head.n_a must be an int" in p for p in check_trinity_config(cfg))
+
+
+def test_valid_numeric_fields_still_pass():
+    # The real defaults must remain clean after the stricter typing.
+    assert check_trinity_config(_trinity()) == []
+
+
+# ---------------------------------------------------------------------------
 # check_config_dir
 # ---------------------------------------------------------------------------
 def test_missing_file_is_reported_not_raised(tmp_path):
