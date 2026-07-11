@@ -110,6 +110,18 @@ def extract_head_and_svf(run_dir: Path) -> tuple[np.ndarray, np.ndarray]:
     return head_W.astype(np.float32), svf_scales.astype(np.float32)
 
 
+def next_generation(submissions_dir: Path) -> int:
+    """Return the next submission generation (max numeric dir + 1, or 1 if empty)."""
+    if not submissions_dir.exists():
+        return 1
+    nums = [
+        int(p.name)
+        for p in submissions_dir.iterdir()
+        if p.is_dir() and p.name.isdigit()
+    ]
+    return max(nums, default=0) + 1
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Pack a trained routing head for submission")
     ap.add_argument("--run-dir", required=True, dest="run_dir",
@@ -134,8 +146,7 @@ def main() -> None:
     gen = args.generation
     if gen == 0:
         submissions_dir = _REPO / "submissions" / miner_name
-        existing = sorted(submissions_dir.glob("*")) if submissions_dir.exists() else []
-        gen = len(existing) + 1
+        gen = next_generation(submissions_dir)
 
     # Create submission directory
     sub_dir = _REPO / "submissions" / miner_name / str(gen)
