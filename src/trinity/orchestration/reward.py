@@ -407,7 +407,12 @@ def normalize_math_answer(ans: str | None) -> str:
     s = re.sub(r"\\text\s*\{([^{}]*)\}", r"\1", s)
     s = re.sub(r"\\mathrm\s*\{([^{}]*)\}", r"\1", s)
     s = s.replace(r"\%", "").replace("%", "")
-    s = s.replace(r"^\circ", "").replace(r"\degree", "")
+    # Degree symbol in either brace form: ``^\circ`` and ``^{\circ}``. The braced
+    # form is common LaTeX and was previously left intact, so ``90^{\circ}`` never
+    # matched a plain ``90`` (a false negative). A caret is required, so a bare
+    # ``\circ`` (function composition) is untouched.
+    s = re.sub(r"\^\{?\\circ\}?", "", s)
+    s = s.replace(r"\degree", "")
     s = s.replace(r"\$", "")
     s = s.strip()
     if s.startswith("="):
