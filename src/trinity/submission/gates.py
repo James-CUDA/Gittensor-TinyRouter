@@ -1,4 +1,4 @@
-"""Offline anti-cheat gates for routing-head submissions (pr_eval gates 1–7).
+"""Offline anti-cheat gates for routing-head submissions (pr_eval gates 1–10).
 
 These checks run with no GPU and no OpenRouter calls. ``scripts/pr_eval.py``
 imports this module; miners can run the same logic locally via
@@ -26,7 +26,9 @@ from trinity.submission.constants import (
     RATE_LIMIT_MAX_SUBMISSIONS,
     RATE_LIMIT_WINDOW_DAYS,
 )
+from trinity.submission.manifest import load_manifest, validate_artifact_manifest
 from trinity.submission.pack import SubmissionPack
+from trinity.submission.receipt_audit import validate_receipt_cmaes, validate_svf_training_signal
 from trinity.submission.schema import validate_pack_schema, validate_theta_integrity
 
 __all__ = [
@@ -43,6 +45,9 @@ __all__ = [
     "validate_ledger_receipt_cost",
     "validate_pack_schema",
     "validate_theta_integrity",
+    "validate_artifact_manifest",
+    "validate_receipt_cmaes",
+    "validate_svf_training_signal",
     "OFFLINE_GATES",
     "run_gate",
     "run_offline_gates",
@@ -439,6 +444,31 @@ def _gate_theta_integrity(pack: SubmissionPack, ctx: PreflightContext) -> Option
     return validate_theta_integrity(pack.head_weights, pack.svf_scales)
 
 
+def _gate_artifact_manifest(pack: SubmissionPack, ctx: PreflightContext) -> Optional[str]:
+    manifest = load_manifest(pack.path)
+    return validate_artifact_manifest(
+        pack.path,
+        manifest,
+        miner=pack.miner,
+        generation=pack.generation,
+        benchmark=ctx.benchmark,
+    )
+
+
+def _gate_receipt_cmaes(pack: SubmissionPack, ctx: PreflightContext) -> Optional[str]:
+    del ctx
+    if not pack.receipt:
+        return "receipt_missing"
+    return validate_receipt_cmaes(pack.receipt)
+
+
+def _gate_svf_training_signal(pack: SubmissionPack, ctx: PreflightContext) -> Optional[str]:
+    del ctx
+    if not pack.receipt:
+        return "receipt_missing"
+    return validate_svf_training_signal(pack.svf_scales, pack.receipt)
+
+
 OFFLINE_GATES: tuple[SubmissionGate, ...] = (
     SubmissionGate("rate_limit", _gate_rate_limit),
     SubmissionGate("weights", _gate_weights),
@@ -447,6 +477,9 @@ OFFLINE_GATES: tuple[SubmissionGate, ...] = (
     SubmissionGate("ledger_cost", _gate_ledger_cost),
     SubmissionGate("pack_schema", _gate_pack_schema),
     SubmissionGate("theta_integrity", _gate_theta_integrity),
+    SubmissionGate("artifact_manifest", _gate_artifact_manifest),
+    SubmissionGate("receipt_cmaes", _gate_receipt_cmaes),
+    SubmissionGate("svf_training_signal", _gate_svf_training_signal),
 )
 
 

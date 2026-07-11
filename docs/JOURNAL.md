@@ -179,6 +179,29 @@ is treated as blank exactly like `""` and like the answer path. Added
 `tests/test_dataset_quality_none_prompt.py`. Fixes #225.
 **Follow-up:** none.
 
+## 2026-07-11 — SVF training-signal check is advisory, not a hard gate  #decision
+**Context:** maintainer review on #199.
+**Expected:** high-fitness packs with identity SVF could be rejected as fraud.
+**Actual:** ``warmstart.py`` preserves SVF at 1.0 so CMA-ES can learn routing
+first; head-only winners are valid under the score-based contract.
+**Fix / decision:** keep ``artifact_manifest`` and ``receipt_cmaes`` as hard
+gates 8–9; downgrade ``svf_training_signal`` to ``OFFLINE_ADVISORIES`` (warn
+only). Identity SVF + high fitness passes preflight but may print ``[WARN]``.
+**Follow-up:** none.
+
+## 2026-07-10 — Submission packs had no artifact binding or CMA-ES metadata audit  #finding #decision
+**Context:** extending ``trinity.submission`` after gates 6–7 (#140) merged.
+**Expected:** miners catch tampered weight/receipt mismatches and fabricated
+``popsize`` / ``m_cma`` values before opening a PR.
+**Actual:** ``receipt.json`` could be edited independently of ``head_weights.npy``,
+and receipts could claim arbitrary CMA-ES hyperparameters.
+**Fix / decision:** add gate 8 (``artifact_manifest``) and gate 9
+(``receipt_cmaes``). ``svf_training_signal`` runs as an advisory only (see
+#199 review). Implemented in ``trinity.submission.manifest`` and
+``trinity.submission.receipt_audit``, wired into ``OFFLINE_GATES`` /
+``OFFLINE_ADVISORIES``, ``pr_eval.py``, and ``SUBMITTING.md``.
+**Follow-up:** none.
+
 ## 2026-07-11 — verify_benchmark crashed on the missing-manifest case it exists to report  #mistake #gotcha #repro
 
 **Context:** reading the new `scripts/verify_benchmark.py` CLI (the offline hidden-benchmark
@@ -220,7 +243,7 @@ the max generation. A gap or a non-generation entry shifts the detected number o
 numerically-named subdirectories — so gaps and stray files can never cause a collision. Added
 `tests/test_pack_submission_generation.py` (pure pathlib, no torch): gap -> 4, contiguous -> 4,
 stray file/non-numeric dir ignored, single high gen 7 -> 8. Fixes #187.
-**Follow-up:** none — an explicit `--generation N` still overrides auto-detect unchanged.
+**Follow-up:** none — an explicit ``--generation N`` still overrides auto-detect unchanged.
 
 ## 2026-07-11 — Novelty scored identical heads as maximally novel after a JSON round-trip  #mistake #decision
 

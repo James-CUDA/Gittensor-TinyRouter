@@ -42,6 +42,7 @@ from trinity.submission.constants import (
     RATE_LIMIT_MAX_SUBMISSIONS,
     RATE_LIMIT_WINDOW_DAYS,
 )
+from trinity.submission.manifest import load_manifest
 from trinity.submission.gates import (
     check_duplicate as _check_duplicate,
     check_rate_limit as _check_rate_limit,
@@ -53,6 +54,9 @@ from trinity.submission.gates import (
     validate_pack_schema,
     validate_receipt as _validate_receipt,
     validate_theta_integrity,
+    validate_artifact_manifest,
+    validate_receipt_cmaes,
+    validate_svf_training_signal,
     validate_weights as _validate_weights,
 )
 
@@ -516,7 +520,34 @@ async def evaluate_pr(pr_number: int, benchmark: str,
     if err:
         return _reject(err)
 
-    print("[pr_eval] All 7 pre-eval gates passed ✓\n")
+    # ══════════════════════════════════════════════════════════════
+    # GATE 8: Artifact manifest / SHA-256 integrity (offline)
+    # ══════════════════════════════════════════════════════════════
+    err = validate_artifact_manifest(
+        sub_dir,
+        load_manifest(sub_dir),
+        miner=miner_name,
+        generation=generation,
+        benchmark=benchmark,
+    )
+    if err:
+        return _reject(err)
+
+    # ══════════════════════════════════════════════════════════════
+    # GATE 9: CMA-ES receipt metadata plausibility (offline)
+    # ══════════════════════════════════════════════════════════════
+    err = validate_receipt_cmaes(receipt)
+    if err:
+        return _reject(err)
+
+    # ══════════════════════════════════════════════════════════════
+    # GATE 10: SVF training-signal plausibility (offline)
+    # ══════════════════════════════════════════════════════════════
+    err = validate_svf_training_signal(svf_scales, receipt)
+    if err:
+        return _reject(err)
+
+    print("[pr_eval] All 10 pre-eval gates passed ✓\n")
 
     # ══════════════════════════════════════════════════════════════
     # Load benchmark + encoder (GPU work starts here)

@@ -31,7 +31,19 @@ from trinity.submission.leaderboard import (
     verify_leaderboard,
 )
 from trinity.submission.pack import SubmissionPack, load_submission_pack, parse_submission_identity
+from trinity.submission.manifest import (
+    ManifestBuilder,
+    build_submission_manifest,
+    load_manifest,
+    validate_artifact_manifest,
+)
 from trinity.submission.preflight import PreflightReport, PreflightRunner, load_leaderboard_json
+from trinity.submission.receipt_audit import (
+    ReceiptCmaesAudit,
+    SvfTrainingSignalAudit,
+    validate_receipt_cmaes,
+    validate_svf_training_signal,
+)
 from trinity.submission.schema import (
     PackSchemaValidator,
     ThetaIntegrityValidator,
@@ -72,6 +84,14 @@ __all__ = [
     "validate_receipt",
     "validate_theta_integrity",
     "validate_weights",
+    "validate_artifact_manifest",
+    "validate_receipt_cmaes",
+    "validate_svf_training_signal",
+    "build_submission_manifest",
+    "load_manifest",
+    "ManifestBuilder",
+    "ReceiptCmaesAudit",
+    "SvfTrainingSignalAudit",
     "PackSchemaValidator",
     "ThetaIntegrityValidator",
 ]

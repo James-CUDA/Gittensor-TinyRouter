@@ -37,6 +37,8 @@ def _valid_receipt(*, benchmark: str = "math500") -> dict:
         "benchmark": benchmark,
         "pool_models": ["qwen3.5-35b-a3b", "minimax-m3", "deepseek-v4-flash"],
         "n_total": EXPECTED_TOTAL_PARAMS,
+        "popsize": 33,
+        "m_cma": 16,
         "total_cost_usd": 21.5,
         "generations": len(gens),
         "best_fitness": 0.72,
@@ -82,9 +84,15 @@ def test_pack_schema_validator_requires_generation_field_per_history_row():
     assert err == "receipt_fitness_history_missing_generation: index 2"
 
 
-def test_offline_gates_include_schema_and_theta():
+def test_offline_gates_include_schema_theta_manifest_and_receipt_audit():
     names = [gate.name for gate in OFFLINE_GATES]
-    assert names[-2:] == ["pack_schema", "theta_integrity"]
+    assert names[-5:] == [
+        "pack_schema",
+        "theta_integrity",
+        "artifact_manifest",
+        "receipt_cmaes",
+        "svf_training_signal",
+    ]
 
 
 # --------------------------------------------------------------------------- #

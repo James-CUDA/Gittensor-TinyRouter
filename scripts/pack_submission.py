@@ -202,6 +202,17 @@ def main() -> None:
     print(f"  receipt.json:     cost=${receipt['total_cost_usd']:.2f}, "
           f"best_fitness={receipt['best_fitness']:.4f}")
 
+    from trinity.submission.manifest import MANIFEST_FILENAME, build_submission_manifest
+
+    manifest = build_submission_manifest(
+        sub_dir,
+        miner=miner_name,
+        generation=gen,
+        benchmark=benchmark,
+    )
+    (sub_dir / MANIFEST_FILENAME).write_text(json.dumps(manifest, indent=2, sort_keys=True))
+    print(f"  {MANIFEST_FILENAME}: content_hash={manifest['content_hash'][:16]}...")
+
     # Write README for the submission
     readme = f"""# Submission: {miner_name} generation {gen}
 
@@ -218,6 +229,7 @@ def main() -> None:
 - `head_weights.npy` — linear head W (6 × 1024) float32
 - `svf_scales.npy` — SVF singular-value scales (7168,) float32
 - `receipt.json` — training metadata
+- `manifest.json` — SHA-256 artifact integrity manifest
 
 ## PR Instructions
 1. Create a branch: `git checkout -b submission/{miner_name}-gen{gen}`

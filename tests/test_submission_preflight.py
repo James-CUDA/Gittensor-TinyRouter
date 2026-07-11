@@ -45,6 +45,8 @@ def _honest_receipt(cost: float = 21.5, *, benchmark: str = "math500") -> dict:
         "benchmark": benchmark,
         "pool_models": ["qwen3.5-35b-a3b", "minimax-m3", "deepseek-v4-flash"],
         "n_total": EXPECTED_TOTAL_PARAMS,
+        "popsize": 33,
+        "m_cma": 16,
         "total_cost_usd": cost,
         "generations": len(gens),
         "best_fitness": 0.72,
@@ -54,6 +56,13 @@ def _honest_receipt(cost: float = 21.5, *, benchmark: str = "math500") -> dict:
             for i, (m, mx, b) in enumerate(gens)
         ],
     }
+
+
+def _write_manifest(pack_dir: Path, miner: str, gen: int, *, benchmark: str = "math500") -> None:
+    from trinity.submission.manifest import MANIFEST_FILENAME, build_submission_manifest
+
+    manifest = build_submission_manifest(pack_dir, miner=miner, generation=gen, benchmark=benchmark)
+    (pack_dir / MANIFEST_FILENAME).write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def _write_submission(
@@ -71,6 +80,7 @@ def _write_submission(
     np.save(d / "svf_scales.npy", svf if svf is not None else _near_identity_svf(gen))
     if receipt is not None:
         (d / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+        _write_manifest(d, miner, gen, benchmark=receipt.get("benchmark", "math500"))
     return d
 
 
