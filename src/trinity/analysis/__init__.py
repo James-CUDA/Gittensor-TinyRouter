@@ -37,6 +37,12 @@ from trinity.analysis.generalization import (
     analyze_pair,
     overfit_verdict,
 )
+from trinity.analysis.sampling import (
+    ModelSampling,
+    SamplingSummary,
+    solve_counts,
+)
+from trinity.analysis.sampling import analyze as analyze_sampling
 from trinity.analysis.significance import (
     InvariantSignificance,
     PairedComparison,
@@ -76,6 +82,10 @@ __all__ = [
     "GeneralizationGap",
     "analyze_pair",
     "overfit_verdict",
+    "ModelSampling",
+    "SamplingSummary",
+    "solve_counts",
+    "analyze_sampling",
     "InvariantSignificance",
     "PairedComparison",
     "assess_invariants",
