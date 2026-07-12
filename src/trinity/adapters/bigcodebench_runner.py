@@ -19,12 +19,13 @@ other benchmark's scoring path.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Optional
 
 from .bigcodebench import extract_solution_code
 
@@ -39,6 +40,51 @@ __all__ = [
 #: Default wall-clock limit (seconds) for one harness run. Bounded so an
 #: adversarial or hanging solution cannot stall the evaluator.
 _TEST_TIMEOUT = 120
+
+#: Default CPU-seconds and output-file-size caps for the child (POSIX only).
+_CPU_SECONDS = 60
+_MAX_FILE_BYTES = 64 * 1024 * 1024
+
+#: Environment variables that are safe to forward to the untrusted child. Anything
+#: NOT listed here — crucially every secret, e.g. ``OPENROUTER_API_KEY``,
+#: ``FIREWORKS_API_KEY``, ``BENCHMARK_PASSWORD`` — is dropped, so the graded code
+#: cannot read (or exfiltrate) a credential from the host environment.
+_ENV_ALLOWLIST = (
+    "PATH", "HOME", "SYSTEMROOT", "SystemRoot", "TEMP", "TMP", "TMPDIR",
+    "LANG", "LC_ALL", "LC_CTYPE",
+)
+
+
+def _sandbox_env() -> dict[str, str]:
+    """A minimal, secret-free environment for the untrusted child interpreter."""
+    env = {
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTHONIOENCODING": "utf-8",
+    }
+    for key in _ENV_ALLOWLIST:
+        if key in os.environ:
+            env[key] = os.environ[key]
+    return env
+
+
+def _resource_limiter() -> Optional[Callable[[], None]]:
+    """A POSIX ``preexec_fn`` that caps CPU time, output size, and core dumps.
+
+    Returns ``None`` on platforms without :mod:`resource` (e.g. Windows), where the
+    wall-clock timeout and scrubbed environment are the isolation. Belt-and-braces
+    with the timeout: ``RLIMIT_CPU`` bounds CPU burn even if the process forks.
+    """
+    try:
+        import resource
+    except ImportError:
+        return None
+
+    def _apply() -> None:  # pragma: no cover - runs only in the child process
+        resource.setrlimit(resource.RLIMIT_CPU, (_CPU_SECONDS, _CPU_SECONDS))
+        resource.setrlimit(resource.RLIMIT_FSIZE, (_MAX_FILE_BYTES, _MAX_FILE_BYTES))
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+    return _apply
 
 
 @dataclass
@@ -80,23 +126,40 @@ def build_harness(solution: str, test: str) -> str:
 
 
 def run_module(source: str, *, timeout: int = _TEST_TIMEOUT) -> tuple[bool, str]:
-    """Write ``source`` to a temp module and run it in a subprocess.
+    """Write ``source`` to a temp module and run it in an isolated subprocess.
 
-    Returns ``(all_passed, detail)``. The module runs in a fresh
-    ``python <file>`` process with the cache disabled and a wall-clock timeout, so
-    a hanging or crashing solution is contained. ``all_passed`` is ``True`` only if
-    the process exits ``0`` (every unittest assertion passed).
+    Returns ``(all_passed, detail)``. ``all_passed`` is ``True`` only if the process
+    exits ``0`` (every unittest assertion passed). The untrusted code is **never**
+    ``exec``'d in-process; it runs in a fresh interpreter that is isolated as far as
+    a pure-Python, cross-platform executor can be — matching the repo's existing
+    ``reward.run_pass_at_1`` sandbox:
+
+    * ``python -I`` (isolated mode): ignores ``PYTHON*`` env vars, ``PYTHONPATH``,
+      and the user site-packages dir, so the child can't be steered via the
+      environment or a planted module.
+    * a **scrubbed environment** (:func:`_sandbox_env`): no host secrets
+      (``OPENROUTER_API_KEY`` etc.) are visible to the graded code.
+    * a throwaway working directory and a wall-clock ``timeout``.
+    * POSIX resource caps (:func:`_resource_limiter`): CPU-seconds, output file
+      size, and no core dumps.
+
+    This is defense-in-depth, not a kernel jail: network egress and the wider
+    read-only filesystem are not blocked here. A deployment that needs a hard jail
+    injects its own executor via the adapter's ``runner`` seam (e.g. a
+    container/nsjail-backed ``score`` callable); this is the safe in-repo default.
     """
     with tempfile.TemporaryDirectory(prefix="bigcodebench-") as tmp:
         script = Path(tmp) / "harness.py"
         script.write_text(source, encoding="utf-8")
         try:
             proc = subprocess.run(
-                [sys.executable, "-B", str(script)],
+                [sys.executable, "-I", "-B", str(script)],
                 cwd=tmp,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                env=_sandbox_env(),
+                preexec_fn=_resource_limiter(),   # None on Windows -> no-op
             )
         except subprocess.TimeoutExpired:
             return False, "harness timed out"

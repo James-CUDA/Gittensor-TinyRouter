@@ -17,14 +17,15 @@ split the repo uses for SWE-bench (issue #212):
   :class:`~trinity.types.Task` objects carrying entry-point/libs metadata.
 * :class:`BigCodeBenchAdapter` — task type :data:`TaskType.CODE`.
 
-**Scope note.** Executing untrusted model code is opt-in, exactly like SWE-bench's
-``repo_provider``: :class:`BigCodeBenchAdapter` takes an optional ``runner`` callable
-``(output, reference) -> float | None`` (e.g. :func:`trinity.adapters.bigcodebench_runner.score_bigcodebench`).
-When set, :meth:`score_output` grades through the sandboxed runner; when ``None``
-(the default) it uses a conservative **exact normalized-solution match** against the
-canonical solution, which never reports a wrong solution as correct — it only
-under-credits a correct-but-different one — so the adapter stays offline and
-code-execution-free out of the box.
+**Execution.** Like LiveCodeBench (which runs code via ``reward.run_pass_at_1``), the
+**registered** adapter grades by *executing* the solution against the task's harness in
+an isolated subprocess (:mod:`trinity.adapters.bigcodebench_runner`): ``python -I``, a
+scrubbed environment that hides host secrets such as ``OPENROUTER_API_KEY``, a throwaway
+work-tree, a wall-clock timeout, and POSIX resource caps. The executor is a pluggable
+seam — the adapter's ``runner`` argument — so a deployment needing a hard jail
+(container/nsjail) injects its own. ``BigCodeBenchAdapter(runner=None)`` keeps a
+conservative **exact normalized-solution match** (no execution) for unit tests and any
+caller that must not run model code.
 """
 from __future__ import annotations
 
@@ -319,12 +320,18 @@ def load_bigcodebench_tasks(split: str, max_items: int | None, seed: int = 0) ->
 class BigCodeBenchAdapter(BenchmarkAdapter):
     """BigCodeBench: library-heavy prompt in, complete Python solution out.
 
-    ``runner`` opts into real execution: a callable ``(output, reference) -> float | None``
-    that grades the solution against the task's ``unittest`` harness in a sandbox
-    (e.g. :func:`trinity.adapters.bigcodebench_runner.score_bigcodebench`). When set,
-    :meth:`score_output` grades through it; when ``None`` (the default) it uses the
-    cheap exact-match placeholder, so the adapter never executes model code out of
-    the box.
+    ``runner`` is the executor seam: a callable ``(output, reference) -> float | None``
+    that grades the solution against the task's ``unittest`` harness. The **registered**
+    adapter (``register_bigcodebench_adapter``) wires in
+    :func:`trinity.adapters.bigcodebench_runner.score_bigcodebench` — the isolated
+    subprocess executor (scrubbed env, ``python -I``, resource caps) — so a normal
+    ``get_adapter("bigcodebench").score_output(...)`` **actually runs the tests**, the
+    same way LiveCodeBench executes via ``reward.run_pass_at_1``. A deployment that
+    needs a harder jail (container/nsjail) injects its own ``runner`` here.
+
+    Constructing ``BigCodeBenchAdapter()`` with ``runner=None`` keeps the cheap
+    exact-match placeholder (no execution) — used by unit tests and any caller that
+    must not run model code.
     """
 
     name = BENCHMARK
@@ -377,10 +384,17 @@ class BigCodeBenchAdapter(BenchmarkAdapter):
 
 
 def register_bigcodebench_adapter() -> None:
-    """Register the BigCodeBench adapter under its name and aliases (idempotent-friendly)."""
+    """Register the BigCodeBench adapter under its name and aliases (idempotent-friendly).
+
+    The registered adapter is wired to the sandboxed executor
+    (:func:`trinity.adapters.bigcodebench_runner.score_bigcodebench`), so evaluation
+    through ``get_adapter("bigcodebench")`` runs the tests rather than falling back to
+    exact source matching.
+    """
+    from .bigcodebench_runner import score_bigcodebench
     from .registry import is_registered
 
-    adapter = BigCodeBenchAdapter()
+    adapter = BigCodeBenchAdapter(runner=score_bigcodebench)
     for name in (BENCHMARK, *ALIASES):
         if not is_registered(name):
             register_adapter(name, adapter)

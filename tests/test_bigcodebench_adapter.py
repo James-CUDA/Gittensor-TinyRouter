@@ -171,5 +171,33 @@ def test_serialize_task_shape(monkeypatch):
     assert d["reference"]["entry_point"] == "add_positive"
 
 
+def test_registered_adapter_executes_via_runner():
+    """Issue #214 review: the registered adapter must RUN the tests, not exact-match.
+
+    A correct solution written differently from the canonical scores 0 under the
+    placeholder but 1.0 when actually executed -- proving the runner is wired in.
+    """
+    from trinity.adapters import get_adapter
+
+    adapter = get_adapter("bigcodebench")
+    assert adapter._runner is not None
+    tasks = load_bigcodebench_tasks("test", None, seed=0)
+    ref = tasks[0].answer   # entry_point add_positive
+    different_but_correct = (
+        "```python\n"
+        "def add_positive(nums):\n"
+        "    total = 0\n"
+        "    for n in nums:\n"
+        "        if n > 0:\n"
+        "            total += n\n"
+        "    return total\n"
+        "```"
+    )
+    # Exact-match placeholder would give 0.0 (source differs from canonical).
+    assert score_solution_exact(different_but_correct, ref) == 0.0
+    # The wired runner executes and passes the tests.
+    assert adapter.score_output(different_but_correct, ref) == 1.0
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

@@ -13,7 +13,9 @@ from trinity.adapters.bigcodebench_runner import (
     BigCodeBenchResult,
     build_harness,
     evaluate_solution,
+    run_module,
     score_bigcodebench,
+    _sandbox_env,
 )
 
 _TEST = (
@@ -87,6 +89,39 @@ def test_timeout_is_a_clean_failure():
     slow = "```python\ndef add_positive(nums):\n    while True:\n        pass\n```"
     res = evaluate_solution(slow, _REF, timeout=2)
     assert res.passed is False and res.reason == "tests_failed"
+
+
+# --- sandbox / isolation (issue #214 review: secrets must not leak) ---
+
+
+def test_sandbox_env_drops_host_secrets(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-should-not-leak")
+    monkeypatch.setenv("BENCHMARK_PASSWORD", "hunter2")
+    env = _sandbox_env()
+    assert "OPENROUTER_API_KEY" not in env
+    assert "BENCHMARK_PASSWORD" not in env
+    assert env.get("PYTHONDONTWRITEBYTECODE") == "1"
+
+
+def test_graded_code_cannot_read_host_secret(monkeypatch):
+    """A secret set in the parent env is invisible to the executed harness."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-should-not-leak")
+    ref = {"entry_point": "f", "test": (
+        "import os, unittest\n"
+        "class T(unittest.TestCase):\n"
+        "    def test_no_secret(self):\n"
+        "        self.assertIsNone(os.environ.get('OPENROUTER_API_KEY'))\n"
+    )}
+    res = evaluate_solution("```python\ndef f():\n    return 1\n```", ref)
+    assert res.passed is True and res.reason == "passed"
+
+
+def test_child_runs_in_isolated_mode():
+    """`python -I` is in effect: sys.flags.isolated is set in the child."""
+    ok, _ = run_module(
+        "import sys\nassert sys.flags.isolated == 1\n", timeout=30
+    )
+    assert ok is True
 
 
 if __name__ == "__main__":
