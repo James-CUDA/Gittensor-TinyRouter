@@ -18,6 +18,31 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-07-13 — verified_ledger_total_usd crashed on a non-UTF-8 ledger instead of returning None  #mistake #finding
+**Context:** auditing the offline cost-accounting path (`llm/openrouter_pricing.py`) that feeds
+`scripts/cost_report.py --ledger` and `pack_submission._estimate_cost()` (the receipt cost a
+miner packs into a submission).
+**Expected:** `verified_ledger_total_usd` returns `None` on an unreadable ledger, exactly as its
+docstring promises ("``None`` when verification fails **or the path is unreadable**") and as the
+missing-file case already does.
+**Actual:** it only caught `OSError`. `verify_ledger_chain` reads the file with `encoding="utf-8"`,
+so a ledger containing non-UTF-8 bytes (a corrupted/partially-written/binary file) raises
+`UnicodeDecodeError` — a subclass of `ValueError`, **not** `OSError` — which escaped the guard and
+propagated. `cost_report.py --ledger` and the `pack_submission` receipt path then died with a raw
+traceback on a file the contract says should degrade to `None`.
+**Root cause:** the guard enumerated only the missing/unreadable-*path* failure (`OSError`) and
+missed the unreadable-*bytes* failure. Malformed-but-UTF-8 content is already handled upstream —
+`verify_ledger_chain_text` catches `ValueError` from `parse_ledger_line` and returns `valid=False`
+— so the only escaping exception is the UTF-8 decode, which happens in `fh.read()` before parsing.
+**Fix / decision:** broaden the clause to `except (OSError, ValueError)`. `UnicodeDecodeError` is a
+`ValueError`, so this catches the decode failure; the `ValueError` arm also future-proofs the
+`sum_ledger_cost` re-read path. The valid-total path is untouched — a good ledger still returns its
+exact rounded cost. Covered by `test_verified_ledger_total_usd_returns_none_for_non_utf8_file`,
+which writes `b"\xff\xfe..."` and asserts `None` (it raised `UnicodeDecodeError` before the fix).
+**Follow-up:** none.
+
+---
+
 ## 2026-07-12 — Radical canonicalization changed a font-wrapper regression expectation  #mistake #repro
 
 **Context:** running the full CI suite after combining the font-wrapper and sqrt-normalization
