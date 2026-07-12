@@ -18,6 +18,19 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-07-12 — Radical canonicalization changed a font-wrapper regression expectation  #mistake #repro
+
+**Context:** running the full CI suite after combining the font-wrapper and sqrt-normalization
+fixes.
+**Expected:** `\mathbf{\sqrt{2}}` follows the same canonical radical spelling as `\sqrt{2}`.
+**Actual:** the inherited font-wrapper test expected the pre-sqrt-normalization text
+`\sqrt{2}`, while normalization now correctly returns `sqrt(2)`.
+**Root cause:** the font-wrapper test asserted an intermediate representation that the later
+radical canonicalizer intentionally changes.
+**Fix / decision:** update the expected canonical form to `sqrt(2)` while retaining the end-to-end
+scoring assertion. This aligns the cross-feature regression test with the normalizer contract.
+**Follow-up:** none.
+
 ## 2026-07-12 — Pi fractions depended on optional SymPy for equivalent normalization  #mistake #decision #repro
 
 **Context:** resolving the sqrt-normalization PR after the pi-normalization PR merged.
@@ -29,6 +42,26 @@ plain slash spelling has none.
 **Fix / decision:** remove parentheses only around atomic `pi` or integer operands adjacent to a
 division operator. This canonicalizes those equivalent forms while preserving function calls such
 as `sqrt(2)`. The existing pi-fraction regression test now passes without SymPy.
+**Follow-up:** none.
+
+## 2026-07-11 — theta_inspect counted a NaN as a "moved" (trained) parameter  #mistake #gotcha #repro
+
+**Context:** reading the new `trinity.theta_inspect` (diagnoses whether a submission theta actually
+trained off its head=0 / svf=1 init, #226).
+**Expected:** a head still at its `W=0` init reports `head_trained=False` and raises the "routing is
+the uniform policy" warning — the module's whole purpose.
+**Actual:** `BlockStats.n_moved` was `size - n_at_init`. But `_block_stats` deliberately excludes
+non-finite entries from `n_at_init` ("a NaN never counts as unchanged"), so every NaN/Inf fell into
+`n_moved`, i.e. counted as "trained". A head of all-zeros with ONE NaN (a realistic divergence
+artifact) → `n_moved=1` → `head_trained=True`, and the uniform-policy warning was suppressed.
+Reproduced: `theta=initial_theta(); theta[0]=nan; inspect_theta(theta).head_trained` was `True`.
+**Root cause:** deriving `n_moved` by subtraction lumps the non-finite bucket (a separate failure
+mode, already counted by `n_nonfinite`) into "moved".
+**Fix / decision:** `n_moved = size - n_at_init - n_nonfinite`, so a non-finite entry is neither
+at-init nor moved (all three fields already stored — one-line property fix). `at_init`/`*_trained`/
+warnings then follow. Added `tests/test_theta_inspect_nonfinite_moved.py` (pure numpy): NaN-on-init
+head/svf → not trained + warning, genuinely-moved block still trained, mixed finite/non-finite
+counts, fully-non-finite block → not trained. Fixes #229.
 **Follow-up:** none.
 ## 2026-07-11 — Convergence DoD read the monotone best-so-far, so collapse was invisible  #mistake #decision
 
