@@ -18,14 +18,15 @@ SWE-bench and BigCodeBench (issue #254):
 * :class:`EvalPlusAdapter` — task type :data:`TaskType.CODE`, one instance per
   dataset (``humaneval_plus`` / ``mbpp_plus``, with ``humaneval`` / ``mbpp`` aliases).
 
-**Scope note.** Executing untrusted model code is opt-in, exactly like SWE-bench's
-``repo_provider`` and BigCodeBench's ``runner``: :class:`EvalPlusAdapter` takes an
-optional ``runner`` callable ``(output, reference) -> float | None`` (e.g.
-:func:`trinity.adapters.evalplus_runner.score_evalplus`). When set,
-:meth:`score_output` grades through the sandboxed runner; when ``None`` (the default)
-it uses a conservative **exact normalized-solution match** against the canonical
-solution, which never reports a wrong solution as correct — so the adapter stays
-offline and code-execution-free out of the box.
+**Execution.** Like LiveCodeBench (which runs code via ``reward.run_pass_at_1``), the
+**registered** adapters grade by *executing* the solution against the base+plus harness
+in an isolated subprocess (:mod:`trinity.adapters.evalplus_runner`): ``python -I``, a
+scrubbed environment that hides host secrets such as ``OPENROUTER_API_KEY``, a throwaway
+work-tree, a wall-clock timeout, and POSIX resource caps. The executor is a pluggable
+seam — the adapter's ``runner`` argument — so a deployment needing a hard jail
+(container/nsjail) injects its own. ``EvalPlusAdapter(name, runner=None)`` keeps a
+conservative **exact normalized-solution match** (no execution) for unit tests and any
+caller that must not run model code.
 """
 from __future__ import annotations
 
@@ -294,12 +295,16 @@ class EvalPlusAdapter(BenchmarkAdapter):
     """An EvalPlus benchmark (HumanEval+ or MBPP+): prompt in, full solution out.
 
     One instance per dataset (``name`` is ``humaneval_plus`` or ``mbpp_plus``).
-    ``runner`` opts into real execution: a callable ``(output, reference) -> float | None``
-    that grades against the base+plus harness in a sandbox (e.g.
-    :func:`trinity.adapters.evalplus_runner.score_evalplus`). When set,
-    :meth:`score_output` grades through it; when ``None`` (the default) it uses the
-    cheap exact-match placeholder, so the adapter never executes model code out of
-    the box.
+    ``runner`` is the executor seam: a callable ``(output, reference) -> float | None``
+    that grades against the base+plus harness. The **registered** adapters
+    (``register_evalplus_adapters``) wire in
+    :func:`trinity.adapters.evalplus_runner.score_evalplus` — the isolated subprocess
+    executor (scrubbed env, ``python -I``, resource caps) — so a normal
+    ``get_adapter("humaneval_plus").score_output(...)`` **actually runs the tests**, the
+    same way LiveCodeBench executes via ``reward.run_pass_at_1``. A deployment needing a
+    harder jail injects its own ``runner``. ``EvalPlusAdapter(name, runner=None)`` keeps
+    the cheap exact-match placeholder (no execution) for unit tests and callers that
+    must not run model code.
     """
 
     def __init__(
@@ -350,11 +355,18 @@ class EvalPlusAdapter(BenchmarkAdapter):
 
 
 def register_evalplus_adapters() -> None:
-    """Register the EvalPlus adapters under their names + aliases (idempotent-friendly)."""
+    """Register the EvalPlus adapters under their names + aliases (idempotent-friendly).
+
+    Each registered adapter is wired to the sandboxed executor
+    (:func:`trinity.adapters.evalplus_runner.score_evalplus`), so evaluation through
+    ``get_adapter("humaneval_plus")`` runs the base+plus harness rather than falling
+    back to exact source matching.
+    """
+    from .evalplus_runner import score_evalplus
     from .registry import is_registered
 
     for name, (_hf, aliases) in DATASETS.items():
-        adapter = EvalPlusAdapter(name)
+        adapter = EvalPlusAdapter(name, runner=score_evalplus)
         for key in (name, *aliases):
             if not is_registered(key):
                 register_adapter(key, adapter)

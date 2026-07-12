@@ -13,7 +13,9 @@ from trinity.adapters.evalplus_runner import (
     EvalPlusResult,
     build_harness,
     evaluate_solution,
+    run_module,
     score_evalplus,
+    _sandbox_env,
 )
 
 _BASE = "def check(candidate):\n    assert candidate(1) == 2\n    assert candidate(0) == 1\n"
@@ -90,6 +92,36 @@ def test_adapter_with_runner_end_to_end():
 def test_timeout_is_a_clean_failure():
     slow = "```python\ndef add_one(x):\n    while True:\n        pass\n```"
     assert evaluate_solution(slow, _REF, timeout=2).passed is False
+
+
+# --- sandbox / isolation (issue #255 review: secrets must not leak) ---
+
+
+def test_sandbox_env_drops_host_secrets(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-should-not-leak")
+    monkeypatch.setenv("BENCHMARK_PASSWORD", "hunter2")
+    env = _sandbox_env()
+    assert "OPENROUTER_API_KEY" not in env
+    assert "BENCHMARK_PASSWORD" not in env
+    assert env.get("PYTHONDONTWRITEBYTECODE") == "1"
+
+
+def test_graded_code_cannot_read_host_secret(monkeypatch):
+    """A secret set in the parent env is invisible to the executed harness."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-should-not-leak")
+    ref = {"entry_point": "f", "plus_test": (
+        "import os\n"
+        "def check(candidate):\n"
+        "    assert os.environ.get('OPENROUTER_API_KEY') is None\n"
+    )}
+    res = evaluate_solution("```python\ndef f():\n    return 1\n```", ref)
+    assert res.passed is True and res.reason == "passed"
+
+
+def test_child_runs_in_isolated_mode():
+    """`python -I` is in effect: sys.flags.isolated is set in the child."""
+    ok, _ = run_module("import sys\nassert sys.flags.isolated == 1\n", timeout=30)
+    assert ok is True
 
 
 if __name__ == "__main__":

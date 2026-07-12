@@ -148,5 +148,22 @@ def test_serialize_task_shape(monkeypatch):
     assert d["reference"]["entry_point"] == "add_one"
 
 
+def test_registered_adapter_executes_via_runner():
+    """Issue #255 review: the registered adapter must RUN the harness, not exact-match.
+
+    A correct solution written differently from the canonical scores 0 under the
+    placeholder but 1.0 when actually executed -- proving the runner is wired in.
+    """
+    adapter = get_adapter(HUMANEVAL_PLUS)
+    assert adapter._runner is not None
+    task = load_evalplus_tasks(HUMANEVAL_PLUS, "test", None, seed=0)[0]
+    ref = task.answer   # entry_point add_one
+    different_but_correct = "```python\ndef add_one(x):\n    y = x\n    return y + 1\n```"
+    # Exact-match placeholder would give 0.0 (source differs from canonical).
+    assert score_solution_exact(different_but_correct, ref) == 0.0
+    # The wired runner executes the base+plus harness and passes.
+    assert adapter.score_output(different_but_correct, ref) == 1.0
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
