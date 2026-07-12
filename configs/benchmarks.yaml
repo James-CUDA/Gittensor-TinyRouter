@@ -1,3 +1,7 @@
+# Legacy benchmark-suite sketch — NOT read by `trinity.eval` or `trinity.train`.
+# Both entrypoints use `configs/trinity.yaml` (coordinator + session + sep_cmaes).
+# Kept as a placeholder until the multi-benchmark suite config is finalized (#157).
+
 # Benchmark suite for evolving and evaluating the coordinator.
 # Exact datasets/splits/versions are confirmed against docs/SPEC.md. [provisional]
 
