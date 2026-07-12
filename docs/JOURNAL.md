@@ -18,6 +18,28 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-07-12 — train-cost estimate dropped a duplicated worker's calls  #mistake #gotcha #repro
+
+**Context:** reading the new `trinity.train_cost.estimate_cmaes_cost` (projects sep-CMA-ES run spend,
+#179-era cost tooling).
+**Expected:** `total_usd` prices all `worker_calls` at the pool's blended per-call cost — the
+docstring's contract.
+**Actual:** `per_call`/`per_model_usd` are keyed by model name (a dict, so duplicate names collapse
+to one entry), but `calls_per_model = worker_calls / len(names)` still divides by the SLOT count. A
+pool that lists a model more than once (reachable via `train_cost_report.py --workers a a b`) drops
+the repeated slots' calls from the total. Reproduced: `['cheap','cheap','pricey']` reports $93.00
+where the documented blend is $96.00; `['a','a']` reports exactly half. Feeds `below_receipt_floor`,
+so an under-count can wrongly clear the $15 receipt floor.
+**Root cause:** collapsing calls by name while dividing by slot count double-loses the duplicated
+model's share.
+**Fix / decision:** split `worker_calls` across the pool slots (`worker_calls/len(names)` each) and
+fold each slot into its model (`calls_by_model[name] += share`), so a repeated model keeps both
+slots' weight. Identical output for a distinct pool; only the duplicated-name case changes, to match
+the documented blend. Added `tests/test_train_cost_duplicate_worker.py` (pure): dup keeps all calls
+priced, `['a','a']` prices both slots, total == worker_calls × slot-blend, distinct pool unchanged.
+Fixes #270.
+**Follow-up:** none.
+
 ## 2026-07-12 — Radical canonicalization changed a font-wrapper regression expectation  #mistake #repro
 
 **Context:** running the full CI suite after combining the font-wrapper and sqrt-normalization

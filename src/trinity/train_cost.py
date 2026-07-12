@@ -113,8 +113,17 @@ def estimate_cmaes_cost(
         per_call[name] = (avg_prompt_tokens / 1e6 * pin
                           + avg_completion_tokens / 1e6 * pout)
 
-    calls_per_model = worker_calls / len(names)
-    per_model_usd = {name: round(calls_per_model * c, 4) for name, c in per_call.items()}
+    # Split the calls across the pool SLOTS (worker_calls / len(names) each), then
+    # fold each slot into its model. Keying only by unique name and dividing by
+    # len(names) would drop the calls of any model the pool lists more than once,
+    # so the priced total no longer covers all worker_calls (an under-count that
+    # can wrongly clear the receipt floor). Summing per-slot shares keeps a
+    # repeated model's full weight in the blend.
+    share = worker_calls / len(names)
+    calls_by_model: dict[str, float] = {}
+    for name in names:
+        calls_by_model[name] = calls_by_model.get(name, 0.0) + share
+    per_model_usd = {name: round(calls_by_model[name] * per_call[name], 4) for name in per_call}
     total = round(sum(per_model_usd.values()), 2)
 
     return TrainCostEstimate(
