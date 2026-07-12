@@ -39,6 +39,13 @@ from trinity.analysis.significance import (
     paired_bootstrap_ci,
     paired_diff_test,
 )
+from trinity.analysis.union_oracle import (
+    BenchmarkOracle,
+    UnionOracleSummary,
+    oracle_from_matrix,
+    relative_error_reduction,
+    union_oracle,
+)
 
 __all__ = [
     "AgreementSummary",
@@ -65,4 +72,9 @@ __all__ = [
     "paired_bootstrap_ci",
     "paired_diff_test",
     "mcnemar",
+    "BenchmarkOracle",
+    "UnionOracleSummary",
+    "oracle_from_matrix",
+    "relative_error_reduction",
+    "union_oracle",
 ]
