@@ -41,6 +41,67 @@ and matching the tuple of concrete exception types would silently miss a new fai
 **Follow-up:** `--meta --append` still writes a `content_hash` into `benchmark_hashes.txt` in
 self-consistency mode, where the hash was never recomputed from the sealed questions; `--append`
 should arguably be restricted to full `--dir` verification. Left for a separate change.
+## 2026-07-11 — theta_inspect counted a NaN as a "moved" (trained) parameter  #mistake #gotcha #repro
+
+**Context:** reading the new `trinity.theta_inspect` (diagnoses whether a submission theta actually
+trained off its head=0 / svf=1 init, #226).
+**Expected:** a head still at its `W=0` init reports `head_trained=False` and raises the "routing is
+the uniform policy" warning — the module's whole purpose.
+**Actual:** `BlockStats.n_moved` was `size - n_at_init`. But `_block_stats` deliberately excludes
+non-finite entries from `n_at_init` ("a NaN never counts as unchanged"), so every NaN/Inf fell into
+`n_moved`, i.e. counted as "trained". A head of all-zeros with ONE NaN (a realistic divergence
+artifact) → `n_moved=1` → `head_trained=True`, and the uniform-policy warning was suppressed.
+Reproduced: `theta=initial_theta(); theta[0]=nan; inspect_theta(theta).head_trained` was `True`.
+**Root cause:** deriving `n_moved` by subtraction lumps the non-finite bucket (a separate failure
+mode, already counted by `n_nonfinite`) into "moved".
+**Fix / decision:** `n_moved = size - n_at_init - n_nonfinite`, so a non-finite entry is neither
+at-init nor moved (all three fields already stored — one-line property fix). `at_init`/`*_trained`/
+warnings then follow. Added `tests/test_theta_inspect_nonfinite_moved.py` (pure numpy): NaN-on-init
+head/svf → not trained + warning, genuinely-moved block still trained, mixed finite/non-finite
+counts, fully-non-finite block → not trained. Fixes #229.
+**Follow-up:** none.
+## 2026-07-11 — Convergence DoD read the monotone best-so-far, so collapse was invisible  #mistake #decision
+
+**Context:** reading `analysis/convergence.py`, which checks the SPEC DoD "the optimizer drives
+J(θ) upward" and flags degenerate runs (issue #235).
+**Expected:** a run whose per-iteration objective J collapses is flagged degenerate and fails the
+DoD — that is the "sep-CMA-ES occasionally converged to a bad policy" case the module names.
+**Actual:** it passed both. `improved`/`degenerate`/`trend_slope` were all computed on the
+`best_fitness` (best-so-far) curve, which `sep_cmaes.run` writes as `opt.best()` each gen — monotone
+non-decreasing by construction (its own smoke test asserts this). So `net_gain >= 0`, `improved` is
+~always True, `degenerate = not improved` ~never fires, and `dod_drives_J_upward = all(improved)` is
+a tautology. The `signal_drop` metric that *does* measure per-iteration collapse was computed but
+wired into nothing.
+**Root cause:** two curves were extracted — `best` (monotone) and `signal` (per-gen J) — but every
+verdict read `best`, the one that cannot fall.
+**Fix / decision:** judge collapse on `signal`. `[OUR CHOICE]` a sign-only criterion
+(`signal[-1] < signal[0] - tol`) rather than a magnitude threshold, so a genuine end-below-start
+regression is flagged while noisy-but-net-upward J is not — no arbitrary cutoff to bikeshed.
+`degenerate = (not improved) or signal_regressed`, and the DoD now requires `improved and not
+degenerate` across the sep-CMA-ES runs. Verified: J collapsing 0.5→0.3 while best-so-far rises now
+flags degenerate and breaks the DoD; a 0.3→0.6→0.5 wobble does not.
+**Follow-up:** `observed_optimizer_order` still means-pools `final` across benchmarks of differing
+difficulty, so a trainer that ran only on an easy benchmark can outrank one that wins on every
+shared benchmark — a separate methodological fix.
+
+## 2026-07-11 — dataset-quality audit missed a None prompt and mis-flagged it as a duplicate  #mistake #gotcha #repro
+
+**Context:** reading the new `trinity.dataset_quality.audit_dataset` (the offline data-quality audit
+of a built benchmark, #189).
+**Expected:** an item with no usable prompt is counted as `missing_prompt` — the audit exists to
+catch "an unscoreable item that still counts toward the denominator".
+**Actual:** the prompt was read as `it.get("question_text", "")`, whose `""` default only applies
+when the key is ABSENT. A present `question_text: None` returned `None`, and `str(None)` is the
+truthy `"None"`: so `missing_prompt` stayed 0, and two None items both normalized to `"none"` and
+were reported as a `duplicate_questions`. Reproduced offline: two `{"question_text": None}` items ->
+`missing_prompt=0, duplicate_questions=1` (should be `2, 0`).
+**Root cause:** `dict.get(k, default)` returns a stored `None` rather than the default. The sibling
+`correct_answer` check on the same loop already guards `if ref is None or ...`, so the prompt path
+was inconsistent with the answer path.
+**Fix / decision:** read the prompt as `it.get("question_text") or ""` in all three spots, so `None`
+is treated as blank exactly like `""` and like the answer path. Added
+`tests/test_dataset_quality_none_prompt.py`. Fixes #225.
+**Follow-up:** none.
 
 ## 2026-07-11 — verify_benchmark crashed on the missing-manifest case it exists to report  #mistake #gotcha #repro
 

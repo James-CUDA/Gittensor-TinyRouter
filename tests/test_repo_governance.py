@@ -114,3 +114,131 @@ def test_pr_bot_detects_routing_submission_from_title_tag():
     )
     result = pr_bot.analyze_pr("[submission] miner-a gen 1 — math500", body, ["README.md"])
     assert result.is_routing_submission is True
+
+
+# --------------------------------------------------------------------------- #
+# issue_bot: an empty section must not pass triage on its header words
+# --------------------------------------------------------------------------- #
+def test_issue_bot_flags_all_empty_bug_sections():
+    # A [bug] issue with only the (empty) section headers must report every
+    # section as missing -- the header text must not count as content, and one
+    # empty section must not be "filled" by the next section's header.
+    body = "**Describe the bug**\n\n**Expected vs actual**\n\n**To reproduce**\n"
+    result = issue_bot.analyze_issue("[bug] crash", body)
+    for field_name in ("bug description", "expected vs actual behavior", "reproduction steps"):
+        assert field_name in result.missing_fields
+    assert result.comment is not None
+
+
+def test_issue_bot_accepts_a_filled_bug_report():
+    body = (
+        "**Describe the bug**\nThe scorer raises IndexError on empty input.\n\n"
+        "**Expected vs actual**\nExpected a score; it crashes instead.\n\n"
+        "**To reproduce**\nCall score_text with an empty candidate list.\n"
+    )
+    result = issue_bot.analyze_issue("[bug] crash", body)
+    assert result.missing_fields == []
+
+
+def test_issue_bot_empty_section_not_filled_by_next_header():
+    # Only the middle section is filled; the empty first/last must be flagged.
+    body = (
+        "**Describe the bug**\n\n"
+        "**Expected vs actual**\nExpected success, observed a hard crash instead.\n\n"
+        "**To reproduce**\n"
+    )
+    result = issue_bot.analyze_issue("[bug] x", body)
+    assert "bug description" in result.missing_fields
+    assert "reproduction steps" in result.missing_fields
+    assert "expected vs actual behavior" not in result.missing_fields
+
+
+# paths: a .github/ change must be labelled area:infra (dot-dir normalization)
+# --------------------------------------------------------------------------- #
+def test_github_path_normalises_without_dropping_the_dot():
+    assert paths._normalise_path(".github/workflows/ci.yml") == ".github/workflows/ci.yml"
+
+
+def test_github_workflow_change_gets_area_infra():
+    assert "area:infra" in paths.area_labels_for_path(".github/workflows/ci.yml")
+    _sensitive, labels = paths.analyse_changed_paths([".github/workflows/ci.yml"])
+    assert "area:infra" in labels
+
+
+def test_leading_dot_slash_prefix_is_still_stripped():
+    # Regression: a "./"-prefixed path still normalises (and stays sensitive).
+    assert paths._normalise_path("./configs/trinity.yaml") == "configs/trinity.yaml"
+    assert paths.is_sensitive_path("./configs/trinity.yaml") is True
+
+
+def test_plain_paths_are_unchanged():
+    assert paths._normalise_path("src/trinity/adapters/x.py") == "src/trinity/adapters/x.py"
+    assert paths.area_labels_for_path("src/trinity/adapters/x.py") == ("area:adapters",)
+
+
+# Routing template: fields are filled INLINE (the shipped template's layout)
+# --------------------------------------------------------------------------- #
+def _inline_routing_body(cost: str = "$25.00") -> str:
+    return (
+        "## Type\n\n"
+        "- [x] **Routing head submission** — trained head\n\n"
+        "## Routing head submission\n\n"
+        "**Benchmark:** math500\n"
+        "**Miner name:** miner-a\n"
+        "**Generation:** 1\n"
+        "**Training method:** CMA-ES\n"
+        f"**Training cost:** {cost}\n"
+    )
+
+
+def test_inline_filled_routing_submission_has_no_template_violation():
+    # Regression: the PR template puts each value inline on the label line, and a
+    # correctly-filled submission must NOT be nagged as incomplete.
+    result = pr_bot.analyze_pr(
+        "[submission] miner-a gen 1", _inline_routing_body(),
+        ["submissions/miner-a/1/head_weights.npy"],
+    )
+    assert result.is_routing_submission is True
+    assert not any("Routing submission template" in v for v in result.template_violations)
+
+
+def test_next_line_filled_routing_submission_still_accepted():
+    body = (
+        "- [x] **Routing head submission**\n\n"
+        "**Benchmark:**\nmath500\n"
+        "**Miner name:**\nminer-a\n"
+        "**Generation:**\n1\n"
+        "**Training method:**\nCMA-ES\n"
+        "**Training cost:**\n$25.00\n"
+    )
+    assert pr_bot._routing_section_filled(body) is True
+
+
+def test_placeholder_routing_fields_are_flagged():
+    # The unedited template defaults ("(math500 or mmlu)", "$XX.XX ...") are placeholders.
+    body = (
+        "- [x] **Routing head submission**\n\n"
+        "**Benchmark:** (math500 or mmlu)\n"
+        "**Miner name:** (your miner identity)\n"
+        "**Generation:** (submission number)\n"
+        "**Training method:** (CMA-ES or other)\n"
+        "**Training cost:** $XX.XX (from cost ledger)\n"
+    )
+    assert pr_bot._routing_section_filled(body) is False
+    result = pr_bot.analyze_pr("[submission] x", body, ["submissions/x/1/head_weights.npy"])
+    assert any("Routing submission template" in v for v in result.template_violations)
+
+
+def test_empty_routing_field_does_not_bleed_into_next_label():
+    # An empty Benchmark field must count as unfilled, not be "filled" by the
+    # following **Miner name:** label.
+    body = (
+        "- [x] **Routing head submission**\n\n"
+        "**Benchmark:**\n\n"
+        "**Miner name:** miner-a\n"
+        "**Generation:** 1\n"
+        "**Training method:** CMA-ES\n"
+        "**Training cost:** $25.00\n"
+    )
+    assert pr_bot._field_value(body, r"\*\*benchmark:\*\*") is None
+    assert pr_bot._routing_section_filled(body) is False
