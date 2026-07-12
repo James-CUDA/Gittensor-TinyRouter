@@ -103,6 +103,9 @@ def score_item(
 
     # Execution-only adapter with no usable context: fall back to its own
     # execution scorer without a context (may still return a value) rather than
-    # silently reporting a cached score it does not support.
-    reward = adapter.score_execution(output, reference, context=execution_context)
+    # silently reporting a cached score it does not support. Pass ``context=None``
+    # explicitly -- a context supplied above that already failed (returned None)
+    # must not be re-used here, or the fallback re-runs the same failing execution
+    # and drops the adapter's context-free score.
+    reward = adapter.score_execution(output, reference, context=None)
     return ScoringOutcome(float(reward or 0.0), ScoringMode.EXECUTION)
