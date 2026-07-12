@@ -171,7 +171,7 @@ def test_serialize_task_shape(monkeypatch):
     assert d["reference"]["entry_point"] == "add_positive"
 
 
-def test_registered_adapter_executes_via_runner():
+def test_registered_adapter_executes_via_runner(monkeypatch):
     """Issue #214 review: the registered adapter must RUN the tests, not exact-match.
 
     A correct solution written differently from the canonical scores 0 under the
@@ -179,6 +179,7 @@ def test_registered_adapter_executes_via_runner():
     """
     from trinity.adapters import get_adapter
 
+    monkeypatch.setitem(sys.modules, "datasets", None)   # force the deterministic toy task
     adapter = get_adapter("bigcodebench")
     assert adapter._runner is not None
     tasks = load_bigcodebench_tasks("test", None, seed=0)
