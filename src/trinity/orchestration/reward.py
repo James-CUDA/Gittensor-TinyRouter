@@ -74,7 +74,10 @@ CHOICE_BENCHMARKS: frozenset[str] = frozenset(
 # over this, so widening it here widens both consistently.
 _CHOICE_LETTERS: str = "ABCDEFGHIJ"
 CODE_BENCHMARKS: frozenset[str] = frozenset(
-    {"livecodebench", "lcb", "bigcodebench", "bigcode"}
+    {
+        "livecodebench", "lcb", "bigcodebench", "bigcode",
+        "humaneval_plus", "humaneval", "humaneval+", "mbpp_plus", "mbpp", "mbpp+",
+    }
 )
 
 # Some frozen hidden-benchmark items carry a versioned adapter *identity* as
