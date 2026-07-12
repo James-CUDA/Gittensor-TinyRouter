@@ -216,5 +216,35 @@ def test_a_blank_env_var_does_not_enable_the_cache(monkeypatch):
     assert cache_from_env() is None
 
 
+class _ErrorThenOkPool:
+    """First call returns an empty error completion; second returns a real answer."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def chat(self, model, messages, *, temperature=0.7, top_p=0.95,
+                   max_tokens=4096, reasoning=None, **kwargs):
+        from trinity.llm.openrouter_client import ChatResult
+
+        self.calls += 1
+        if self.calls == 1:
+            return ChatResult(model=model, text="", finish_reason="error", raw={})
+        return ChatResult(model=model, text="real-answer", finish_reason="stop", raw={})
+
+
+def test_transient_error_completion_is_not_cached(tmp_path):
+    pool = _ErrorThenOkPool()
+    cp = CachedPool(pool, ResponseCache(tmp_path))
+    first = asyncio.run(cp.chat("m-a", MSGS, temperature=0.0))
+    second = asyncio.run(cp.chat("m-a", MSGS, temperature=0.0))
+
+    assert first.text == "" and first.finish_reason == "error"
+    assert second.text == "real-answer"
+    assert pool.calls == 2
+    assert cp.stats.skipped == 1 and cp.stats.writes == 1
+    assert cp.stats.hits == 0
+    assert len(list(tmp_path.rglob("*.json"))) == 1
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))

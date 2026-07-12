@@ -99,6 +99,7 @@ class CacheStats:
     writes: int = 0
     bypassed: int = 0          # sampled requests, never cacheable
     errors: int = 0            # unreadable/corrupt entries, treated as misses
+    skipped: int = 0           # transient empty/error completions, not persisted
     prompt_tokens_saved: int = 0
     completion_tokens_saved: int = 0
 
@@ -125,6 +126,7 @@ class CacheStats:
             "writes": self.writes,
             "bypassed": self.bypassed,
             "errors": self.errors,
+            "skipped": self.skipped,
             "hit_rate": round(self.hit_rate, 4),
             "prompt_tokens_saved": self.prompt_tokens_saved,
             "completion_tokens_saved": self.completion_tokens_saved,
@@ -224,6 +226,13 @@ def _is_cacheable(temperature: float) -> bool:
     return float(temperature) == 0.0
 
 
+def _is_cacheable_result(result: Any) -> bool:
+    """True when a completion is a real answer worth persisting."""
+    if getattr(result, "finish_reason", None) == "error":
+        return False
+    return bool(str(getattr(result, "text", "") or "").strip())
+
+
 class CachedPool:
     """Wrap a pool so deterministic completions are served from disk.
 
@@ -300,7 +309,10 @@ class CachedPool:
             model, messages, temperature=temperature, top_p=top_p,
             max_tokens=max_tokens, reasoning=reasoning, **kwargs,
         )
-        self._cache.put(key, self._record_from(result))
+        if _is_cacheable_result(result):
+            self._cache.put(key, self._record_from(result))
+        else:
+            self._cache.stats.skipped += 1
         return result
 
     @staticmethod
