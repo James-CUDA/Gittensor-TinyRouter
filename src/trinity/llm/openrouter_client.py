@@ -115,7 +115,11 @@ def _message_text(choice_message: dict) -> str:
             if not isinstance(item, dict):
                 continue
             if item.get("type") == "text":
-                parts.append(str(item.get("text", "")))
+                # A text part's value is nullable too, not just the top-level
+                # content: ``{"type": "text", "text": null}`` must contribute ""
+                # (str(None) would splice the literal "None" into the transcript).
+                text = item.get("text")
+                parts.append("" if text is None else str(text))
         return "".join(parts)
     return str(content)
 
