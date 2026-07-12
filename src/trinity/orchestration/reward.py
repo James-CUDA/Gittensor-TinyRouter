@@ -743,15 +743,22 @@ def extract_choice_letter(text: str) -> str | None:
     # Unwrap LaTeX font/emphasis commands first, so a boxed but formatted letter
     # (``\boxed{\text{B}}``, ``\textbf{C}``) is matched exactly like a bare one.
     text = _strip_choice_font_wrappers(text)
+    # Take the globally LAST answer-bearing match across ALL patterns: the model
+    # may discuss or revise a choice before committing ("the answer is A ... on
+    # reflection, \boxed{C}"), so the final occurrence in the text is the committed
+    # answer, regardless of which phrasing expressed it. Scanning per-pattern and
+    # returning the first matching pattern would honour recency only *within* one
+    # phrasing and pick a revised-away first guess when the commitment used a
+    # different form. Pattern order is kept only as a tie-break for two matches at
+    # the same position. Mirrors "final answers usually come last" (extract_boxed,
+    # verifier.parse_verdict).
+    best: tuple[int, str] | None = None
     for pat in _CHOICE_PATTERNS:
-        # Take the LAST match of each pattern: the model may discuss or revise a
-        # choice before committing ("the answer is A ... on reflection, C"), so
-        # the final occurrence is the committed answer. This mirrors the "final
-        # answers usually come last" contract also honoured by extract_boxed and
-        # trinity.roles.verifier.parse_verdict.
-        matches = list(pat.finditer(text))
-        if matches:
-            return matches[-1].group(1).upper()
+        for hit in pat.finditer(text):
+            if best is None or hit.start() > best[0]:
+                best = (hit.start(), hit.group(1).upper())
+    if best is not None:
+        return best[1]
     # Fallback (P2 review fix): only trust the LAST non-empty line, and only when
     # it is essentially just the letter (e.g. "B", "(C)", "D."). This avoids the
     # English article "A" in prose like "A nice approach" being read as a choice.
