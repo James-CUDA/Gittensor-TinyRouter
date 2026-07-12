@@ -148,12 +148,13 @@ def test_serialize_task_shape(monkeypatch):
     assert d["reference"]["entry_point"] == "add_one"
 
 
-def test_registered_adapter_executes_via_runner():
+def test_registered_adapter_executes_via_runner(monkeypatch):
     """Issue #255 review: the registered adapter must RUN the harness, not exact-match.
 
     A correct solution written differently from the canonical scores 0 under the
     placeholder but 1.0 when actually executed -- proving the runner is wired in.
     """
+    monkeypatch.setitem(sys.modules, "datasets", None)   # force the deterministic toy task
     adapter = get_adapter(HUMANEVAL_PLUS)
     assert adapter._runner is not None
     task = load_evalplus_tasks(HUMANEVAL_PLUS, "test", None, seed=0)[0]
