@@ -222,8 +222,14 @@ def _answers_agree(benchmark: str, a: str, b: str) -> bool:
     Reuses the eval scorer's own extractors so "agreement" here means exactly what
     "correct" means there: a choice letter, a math value (symbolic/numeric), or the
     extracted code string. Unknown benchmarks fall back to a stripped-text match.
+
+    A versioned/adapter identity (e.g. ``livecodebench_v6``) is resolved to its
+    dispatch key first, exactly as ``reward.has_answer`` / ``score_text`` do —
+    otherwise a v6 item would miss ``CODE_BENCHMARKS`` and fall through to raw-text
+    equality, so two turns with identical code but different prose would wrongly
+    "disagree".
     """
-    key = (benchmark or "").strip().lower()
+    key = _reward.resolve_benchmark(benchmark)
     if key in _reward.CHOICE_BENCHMARKS:
         la = _reward.extract_choice_letter(a)
         return la is not None and la == _reward.extract_choice_letter(b)
@@ -253,7 +259,7 @@ def hero_quality(traj) -> float:
     the first cut of this reward. This shapes only TRAINING fitness (via
     :func:`hero_bucket_bonus`); the eval scorer never sees it.
     """
-    benchmark = (traj.task.benchmark or "").strip().lower()
+    benchmark = _reward.resolve_benchmark(traj.task.benchmark)
     committed = _reward.committed_answer(benchmark, traj)
     outs = _reward.answerful_non_verifier_outputs(benchmark, getattr(traj, "turns", None))
     if not outs:
