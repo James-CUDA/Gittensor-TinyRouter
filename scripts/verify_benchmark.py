@@ -84,12 +84,30 @@ def load_splits(bench_dir: str | Path, password: str) -> tuple[dict[str, list], 
             problems.append(f"{fp.name}: decryption failed ({type(exc).__name__})")
             splits[name] = []
             continue
+        # A file can decrypt cleanly yet still be structurally malformed: a JSON
+        # array (``[]``), a bare string/number, or a dict whose ``count`` is not an
+        # integer. ``data.get(...)`` / ``int(data["count"])`` would raise on those,
+        # so a tampered-but-decryptable payload has to be validated here too, or the
+        # verifier dies with a traceback on exactly the corruption it exists to catch.
+        if not isinstance(data, dict):
+            problems.append(
+                f"{fp.name}: decoded payload is {type(data).__name__}, expected a JSON object"
+            )
+            splits[name] = []
+            continue
         items = list(data.get("items") or [])
         splits[name] = items
         if data.get("seed") != protocol.SEALED_SEED:
             problems.append(f"{fp.name}: seed {data.get('seed')!r} != sealed {protocol.SEALED_SEED}")
-        if data.get("count") is not None and int(data["count"]) != len(items):
-            problems.append(f"{fp.name}: count {data.get('count')} != len(items) {len(items)}")
+        count = data.get("count")
+        if count is not None:
+            # JSON ints decode to ``int``; a float, string, list, or bool count is
+            # malformed. Reject it as a problem instead of letting ``int(...)`` raise
+            # (or silently truncating a float like 3.7 into a passing 3).
+            if isinstance(count, bool) or not isinstance(count, int):
+                problems.append(f"{fp.name}: count {count!r} is not an integer")
+            elif count != len(items):
+                problems.append(f"{fp.name}: count {count} != len(items) {len(items)}")
     return splits, problems
 
 

@@ -212,6 +212,45 @@ def test_wrong_password_reports_decryption_failed(tmp_path):
     assert any("decryption failed" in p for p in probs)
 
 
+def test_load_splits_reports_non_object_payload_instead_of_crashing(tmp_path):
+    # A split can decrypt cleanly yet not be a JSON object (e.g. an array `[]` or a
+    # bare string). `data.get(...)` would raise AttributeError on those, so the
+    # verifier must report FAIL, not crash.
+    pytest.importorskip("cryptography")
+    (tmp_path / "eval.json").write_text(_encrypt([], "pw"))            # JSON array
+    (tmp_path / "audit.json").write_text(_encrypt("nope", "pw"))       # JSON string
+    (tmp_path / "live.json").write_text(
+        _encrypt({"seed": protocol.SEALED_SEED, "count": 0, "items": []}, "pw")
+    )
+    splits, problems = vb.load_splits(tmp_path, "pw")
+    assert splits["eval"] == [] and splits["audit"] == []
+    assert any("eval.json" in p and "expected a JSON object" in p for p in problems)
+    assert any("audit.json" in p and "expected a JSON object" in p for p in problems)
+
+
+def test_load_splits_reports_non_integer_count_instead_of_crashing(tmp_path):
+    # A dict payload whose `count` is a string / float / list must be a recorded
+    # problem, not an `int(...)` ValueError (and a float like 3.7 must not silently
+    # truncate into a passing count).
+    pytest.importorskip("cryptography")
+    items = _splits()["eval"]  # len 2
+    (tmp_path / "eval.json").write_text(
+        _encrypt({"seed": protocol.SEALED_SEED, "count": "two", "items": items}, "pw")
+    )
+    (tmp_path / "audit.json").write_text(
+        _encrypt({"seed": protocol.SEALED_SEED, "count": 2.5, "items": items}, "pw")
+    )
+    (tmp_path / "live.json").write_text(
+        _encrypt({"seed": protocol.SEALED_SEED, "count": 2, "items": items}, "pw")
+    )
+    splits, problems = vb.load_splits(tmp_path, "pw")
+    assert splits["eval"] == items  # items still surfaced for the manifest check
+    assert any("eval.json" in p and "not an integer" in p for p in problems)
+    assert any("audit.json" in p and "not an integer" in p for p in problems)
+    # the well-formed count matching len(items) is NOT flagged
+    assert not any("live.json" in p and ("integer" in p or "count" in p) for p in problems)
+
+
 def test_verify_dir_reports_missing_meta(tmp_path):
     # No meta.json at all -> a clean "missing" problem, not a FileNotFoundError.
     assert vb.verify_dir(tmp_path, "pw") == ["missing meta.json"]
