@@ -156,7 +156,10 @@ def main() -> None:
     rows = load_rows(args.root)
     print(render(rows))
     if args.json:
-        Path("experiments/results.json").write_text(json.dumps(rows, indent=2))
+        # Write alongside the eval*.json it consolidates, honoring --root (the old
+        # hardcoded "experiments/results.json" ignored --root and crashed when the
+        # chosen root was not the default "experiments").
+        Path(args.root, "results.json").write_text(json.dumps(rows, indent=2))
 
 
 if __name__ == "__main__":
