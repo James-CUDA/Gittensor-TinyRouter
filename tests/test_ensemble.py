@@ -108,3 +108,41 @@ def test_render_r3_verdict():
     # without a TRINITY score, the verdict is deferred, not fabricated.
     assert "must beat this ensemble baseline" in render(s)
     assert render(analyze([], benchmark="toy")).strip().endswith("(no cached-answer items found)_")
+
+
+# --------------------------------------------------------------------------- #
+# Ragged pool: reject (mirrors analysis.agreement) so best_single <= oracle holds
+# --------------------------------------------------------------------------- #
+def test_ragged_pool_is_rejected():
+    # Model 'c' appears only in the last item (where it is right); grading it over
+    # 1 item while the oracle spans 3 would give best_single (1.0) > oracle_any.
+    items = [
+        _item({"a": "X", "b": "W"}),
+        _item({"a": "W", "b": "W"}),
+        _item({"c": "X"}),
+    ]
+    with pytest.raises(ValueError, match="ragged pool|expected"):
+        analyze(items, benchmark="toy", score_fn=_exact)
+
+
+def test_best_single_never_exceeds_oracle_on_uniform_pool():
+    items = [
+        _item({"a": "X", "b": "W", "c": "W"}),
+        _item({"a": "W", "b": "X", "c": "W"}),
+        _item({"a": "X", "b": "W", "c": "X"}),
+    ]
+    s = analyze(items, benchmark="toy", score_fn=_exact)
+    assert s.best_single <= s.oracle_any + 1e-9
+    # Every model is graded over all 3 items (uniform denominators).
+    assert len(s.models) == 3
+
+
+def test_empty_answer_items_do_not_make_pool_ragged():
+    # An item with empty model_answers is skipped and must not trip the guard.
+    items = [
+        _item({"a": "X", "b": "X"}),
+        _item({}),
+        _item({"a": "X", "b": "W"}),
+    ]
+    s = analyze(items, benchmark="toy", score_fn=_exact)
+    assert s.n_questions == 2
