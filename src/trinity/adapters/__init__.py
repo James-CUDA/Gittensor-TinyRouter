@@ -26,6 +26,7 @@ from .benchmarks import (
 )
 from .bbh import BBHAdapter, BBHReference, register_bbh_adapter
 from .builtin import DelegatingBenchmarkAdapter, register_livecodebench_v6_adapter
+from .drop import DropAdapter, DropReference, register_drop_adapter
 from .livecodebench import LiveCodeBenchV6Adapter
 from .mmlu_pro import MmluProAdapter, register_mmlu_pro_adapter
 from .registry import (
@@ -61,6 +62,8 @@ __all__ = [
     "PatchReference",
     "BBHAdapter",
     "BBHReference",
+    "DropAdapter",
+    "DropReference",
     "MmluProAdapter",
     "register_adapter",
     "get_adapter",
@@ -70,6 +73,7 @@ __all__ = [
     "register_builtin_adapters",
     "register_swebench_adapter",
     "register_bbh_adapter",
+    "register_drop_adapter",
     "register_mmlu_pro_adapter",
 ]
 
@@ -79,4 +83,5 @@ register_builtin_adapters()
 register_livecodebench_v6_adapter()
 register_swebench_adapter()
 register_bbh_adapter()
+register_drop_adapter()
 register_mmlu_pro_adapter()
