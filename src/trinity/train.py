@@ -55,6 +55,30 @@ def _resolve_x0(args, spec) -> np.ndarray:
     return theta
 
 
+def _load_train_tasks(benchmark: str, *, max_items: int, seed: int):
+    """Load the training split, refusing the offline toy set.
+
+    ``build_benchmark`` already hard-fails when HuggingFace is unreachable and the
+    loaders substitute their 2-item toy set. Training must not silently produce a
+    plausible ``summary.json`` / receipt from toy data — the JOURNAL follow-up from
+    the hidden-benchmark guard (2026-07-10).
+    """
+    import warnings
+
+    from .adapters.split_policy import ToyFallbackWarning
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ToyFallbackWarning)
+        try:
+            return load_tasks(benchmark, "train", max_items=max_items, seed=seed)
+        except ToyFallbackWarning as exc:
+            raise RuntimeError(
+                f"Refusing to train on the offline toy set for {benchmark!r}: {exc} "
+                f"Install `datasets`, check network access, and verify the benchmark's "
+                f"train split exists upstream."
+            ) from exc
+
+
 def build_summary(
     *,
     benchmark: str,
@@ -160,7 +184,7 @@ async def train(args) -> dict:
     _pat_arg = getattr(args, "patience", None)
     patience = _pat_arg if _pat_arg is not None else int(sc.get("patience", 0))
 
-    tasks = load_tasks(args.benchmark, "train", max_items=args.max_items, seed=args.seed)
+    tasks = _load_train_tasks(args.benchmark, max_items=args.max_items, seed=args.seed)
     print(f"[train] loaded {len(tasks)} train tasks")
 
     selector: ValidationSelector | None = None
