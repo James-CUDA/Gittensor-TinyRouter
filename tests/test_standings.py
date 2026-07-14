@@ -5,6 +5,8 @@ generalist strong on every benchmark outranks a specialist who tops one. stdlib 
 torch/network.
 """
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -24,8 +26,15 @@ def _win(miner, score, pr, merged=True):
             "merged": merged, "timestamp": "2026-07-13T00:00:00Z"}
 
 
-def test_no_torch_imported():
-    assert "torch" not in sys.modules
+def test_module_imports_without_torch():
+    # A global sys.modules check is unreliable where torch IS installed (CI): another
+    # test imports it into the shared process before this one runs. Verify in a CLEAN
+    # subprocess that importing this module alone never pulls in torch.
+    code = ("import sys; sys.path.insert(0, 'src'); import trinity.standings; "
+            "assert 'torch' not in sys.modules")
+    r = subprocess.run([sys.executable, "-c", code], cwd=str(_REPO),
+                       capture_output=True, text=True, env={**os.environ, "PYTHONPATH": "src"})
+    assert r.returncode == 0, r.stderr
 
 
 # --------------------------------------------------------------------------- #
