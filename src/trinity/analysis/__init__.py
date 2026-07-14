@@ -49,6 +49,12 @@ from trinity.analysis.sampling import (
     solve_counts,
 )
 from trinity.analysis.sampling import analyze as analyze_sampling
+from trinity.analysis.selective import (
+    ModelSelective,
+    SelectiveSummary,
+    risk_coverage,
+)
+from trinity.analysis.selective import analyze as analyze_selective
 from trinity.analysis.significance import (
     InvariantSignificance,
     PairedComparison,
@@ -96,6 +102,10 @@ __all__ = [
     "SamplingSummary",
     "solve_counts",
     "analyze_sampling",
+    "ModelSelective",
+    "SelectiveSummary",
+    "risk_coverage",
+    "analyze_selective",
     "InvariantSignificance",
     "PairedComparison",
     "assess_invariants",
