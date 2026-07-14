@@ -102,6 +102,28 @@ def test_number_normalization():
     assert score_drop("Answer: 17", {"gold_answers": ["16"]}) == 0.0
 
 
+def test_thousands_separator_is_ignored():
+    # A model may write a large number with commas; "1,000" is the value 1000, and the
+    # old strip-then-float left the comma so float() failed and "1,000" != "1000".
+    assert score_drop("Answer: 1,000", {"gold_answers": ["1000"]}) == 1.0
+    assert score_drop("Answer: 1000", {"gold_answers": ["1,000"]}) == 1.0
+    assert score_drop("Answer: 2,500,000", {"gold_answers": ["2500000"]}) == 1.0
+    # a decimal-with-comma must keep its point, not collapse "1,234.5" -> "12345"
+    assert score_drop("Answer: 1,234.5", {"gold_answers": ["1234.5"]}) == 1.0
+    assert score_drop("Answer: 1,234", {"gold_answers": ["12345"]}) == 0.0
+
+
+def test_leading_sign_is_preserved():
+    # -5 must NOT match 5: the old strip(string.punctuation) dropped the leading '-',
+    # so a wrong-sign answer scored a false 1.0.
+    assert score_drop("Answer: -5", {"gold_answers": ["-5"]}) == 1.0
+    assert score_drop("Answer: 5", {"gold_answers": ["-5"]}) == 0.0
+    assert score_drop("Answer: -5", {"gold_answers": ["5"]}) == 0.0
+    assert score_drop("Answer: -1,000", {"gold_answers": ["-1000"]}) == 1.0
+    # currency/percent wrapping is still stripped as before
+    assert score_drop("Answer: $16", {"gold_answers": ["16"]}) == 1.0
+
+
 def test_article_punctuation_case_folding():
     ref = {"gold_answers": ["Ana Ruiz"]}
     assert score_drop("Answer: the ana ruiz.", ref) == 1.0   # article + case + punctuation
