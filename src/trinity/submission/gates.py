@@ -1,11 +1,14 @@
-"""Offline anti-cheat gates for routing-head submissions (pr_eval gates 1–9).
+"""Offline anti-cheat gates for routing-head submissions (pr_eval gates 1–10).
 
 These checks run with no GPU and no OpenRouter calls. ``scripts/pr_eval.py``
 imports this module; miners can run the same logic locally via
 ``scripts/preflight_submission.py`` before opening a PR.
 
-``svf_training_signal`` is an **advisory** only (warns, never rejects) — see #199
-review: warm-start keeps SVF at identity while the head learns.
+Non-blocking advisories (warn, never reject):
+
+* ``svf_training_signal`` — #199 review: warm-start keeps SVF at identity
+* ``ledger_call_volume`` / ``head_routing_diversity`` — #210 review: style /
+  unbound-ledger checks must not hard-reject score-based winners
 """
 from __future__ import annotations
 
@@ -31,6 +34,11 @@ from trinity.submission.constants import (
 )
 from trinity.submission.manifest import load_manifest, validate_artifact_manifest
 from trinity.submission.pack import SubmissionPack
+from trinity.submission.provenance_audit import (
+    validate_fitness_history_sequence,
+    validate_head_routing_diversity,
+    validate_ledger_call_volume,
+)
 from trinity.submission.receipt_audit import validate_receipt_cmaes, validate_svf_training_signal
 from trinity.submission.schema import validate_pack_schema, validate_theta_integrity
 
@@ -51,6 +59,9 @@ __all__ = [
     "validate_artifact_manifest",
     "validate_receipt_cmaes",
     "validate_svf_training_signal",
+    "validate_fitness_history_sequence",
+    "validate_ledger_call_volume",
+    "validate_head_routing_diversity",
     "AdvisoryResult",
     "OFFLINE_GATES",
     "OFFLINE_ADVISORIES",
@@ -487,6 +498,24 @@ def _advisory_svf_training_signal(pack: SubmissionPack, ctx: PreflightContext) -
     return validate_svf_training_signal(pack.svf_scales, pack.receipt)
 
 
+def _gate_fitness_history_sequence(pack: SubmissionPack, ctx: PreflightContext) -> Optional[str]:
+    del ctx
+    if not pack.receipt:
+        return "receipt_missing"
+    return validate_fitness_history_sequence(pack.receipt)
+
+
+def _advisory_ledger_call_volume(pack: SubmissionPack, ctx: PreflightContext) -> Optional[str]:
+    if not pack.receipt:
+        return None
+    return validate_ledger_call_volume(pack.receipt, ctx.ledger_path)
+
+
+def _advisory_head_routing_diversity(pack: SubmissionPack, ctx: PreflightContext) -> Optional[str]:
+    del ctx
+    return validate_head_routing_diversity(pack.head_weights)
+
+
 OFFLINE_GATES: tuple[SubmissionGate, ...] = (
     SubmissionGate("rate_limit", _gate_rate_limit),
     SubmissionGate("weights", _gate_weights),
@@ -497,10 +526,13 @@ OFFLINE_GATES: tuple[SubmissionGate, ...] = (
     SubmissionGate("theta_integrity", _gate_theta_integrity),
     SubmissionGate("artifact_manifest", _gate_artifact_manifest),
     SubmissionGate("receipt_cmaes", _gate_receipt_cmaes),
+    SubmissionGate("fitness_history_sequence", _gate_fitness_history_sequence),
 )
 
 OFFLINE_ADVISORIES: tuple[SubmissionGate, ...] = (
     SubmissionGate("svf_training_signal", _advisory_svf_training_signal),
+    SubmissionGate("ledger_call_volume", _advisory_ledger_call_volume),
+    SubmissionGate("head_routing_diversity", _advisory_head_routing_diversity),
 )
 
 

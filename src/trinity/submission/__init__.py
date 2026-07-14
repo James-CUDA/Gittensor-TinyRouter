@@ -41,6 +41,14 @@ from trinity.submission.manifest import (
     validate_artifact_manifest,
 )
 from trinity.submission.preflight import PreflightReport, PreflightRunner, load_leaderboard_json
+from trinity.submission.provenance_audit import (
+    FitnessHistorySequenceAudit,
+    HeadRoutingDiversityAudit,
+    LedgerTrainingVolumeAudit,
+    validate_fitness_history_sequence,
+    validate_head_routing_diversity,
+    validate_ledger_call_volume,
+)
 from trinity.submission.receipt_audit import (
     ReceiptCmaesAudit,
     SvfTrainingSignalAudit,
@@ -93,11 +101,17 @@ __all__ = [
     "validate_artifact_manifest",
     "validate_receipt_cmaes",
     "validate_svf_training_signal",
+    "validate_fitness_history_sequence",
+    "validate_ledger_call_volume",
+    "validate_head_routing_diversity",
     "build_submission_manifest",
     "load_manifest",
     "ManifestBuilder",
     "ReceiptCmaesAudit",
     "SvfTrainingSignalAudit",
+    "FitnessHistorySequenceAudit",
+    "HeadRoutingDiversityAudit",
+    "LedgerTrainingVolumeAudit",
     "PackSchemaValidator",
     "ThetaIntegrityValidator",
 ]

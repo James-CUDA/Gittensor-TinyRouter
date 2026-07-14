@@ -18,6 +18,41 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-07-14 — Stack #210 provenance gates after #199 so both PRs can merge  #decision
+**Context:** maintainer / reviewer comments on #199 and #210: both touch
+``gates.py`` / ``pr_eval`` / ``SUBMITTING.md`` and should be sequenced, not raced.
+**Expected:** keep two open PRs while avoiding mutual conflict on merge.
+**Fix / decision:** rebase #199 onto current ``main`` first (gates 8–9 + SVF
+advisory). Stack #210 on that tip: ``fitness_history_sequence`` is hard gate 10;
+ledger volume and head diversity stay advisories alongside ``svf_training_signal``.
+Merge order: #199 then #210.
+**Follow-up:** none if maintainers squash-merge #199 — rebase #210 onto main after.
+
+## 2026-07-11 — Ledger volume and head-collapse checks are advisories, not gates  #decision
+**Context:** maintainer review on #210.
+**Expected:** all three provenance audits could hard-reject at preflight.
+**Actual:** ``ledger_call_volume`` sums a shared ledger with no run identity, so
+unrelated traffic can satisfy the threshold; ``head_routing_diversity`` enforces
+a style preference, but the contest is outcome-based (score wins).
+**Fix / decision:** keep only ``fitness_history_sequence`` as a hard provenance
+gate (gate 10 when stacked after #199). Downgrade ``ledger_call_volume`` and
+``head_routing_diversity`` to ``OFFLINE_ADVISORIES``. Revisit ledger volume when
+run-scoped provenance lands in the cost ledger.
+**Follow-up:** bind ledger rows to ``run_id`` / submission receipt before
+promoting volume audit back to a gate.
+
+## 2026-07-11 — Preflight missed fitness sequence fraud beyond aggregate receipt checks  #finding #decision
+**Context:** extending ``trinity.submission`` after gates 6–7 (#140) and after
+#199's artifact/CMA-ES gates.
+**Expected:** miners catch scrambled ``fitness_history`` rows before opening a PR.
+**Actual:** gate 4 checked aggregate fitness plausibility but not per-generation
+ordering or mean/max consistency.
+**Fix / decision:** add ``fitness_history_sequence`` in
+``trinity.submission.provenance_audit``, wire into ``OFFLINE_GATES`` as gate 10,
+plus ledger-volume / head-collapse advisories. Covered by
+``tests/test_submission_provenance_audit.py``.
+**Follow-up:** see advisory downgrade entry above (#210 review).
+
 ## 2026-07-13 — verified_ledger_total_usd crashed on a non-UTF-8 ledger instead of returning None  #mistake #finding
 **Context:** auditing the offline cost-accounting path (`llm/openrouter_pricing.py`) that feeds
 `scripts/cost_report.py --ledger` and `pack_submission._estimate_cost()` (the receipt cost a

@@ -75,11 +75,12 @@ python scripts/preflight_submission.py \
     --benchmark math500
 ```
 
-Preflight runs nine offline gates: rate limit, weight sanity, duplicate
+Preflight runs ten offline gates: rate limit, weight sanity, duplicate
 detection, receipt plausibility, ledger/receipt cost match (when a ledger is
 provided), receipt schema/benchmark consistency, theta pack/unpack integrity,
-artifact SHA-256 manifest, and CMA-ES receipt metadata. An **advisory**
-(SVF training-signal) may print a warning but never blocks submission.
+artifact SHA-256 manifest, CMA-ES receipt metadata, and fitness-history
+sequence audit. Three **advisories** (SVF training-signal, ledger call
+volume, head routing diversity) may print warnings but never block submission.
 
 ## Step 3: Submit
 

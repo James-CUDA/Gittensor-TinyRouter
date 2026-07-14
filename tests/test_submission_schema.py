@@ -84,13 +84,14 @@ def test_pack_schema_validator_requires_generation_field_per_history_row():
     assert err == "receipt_fitness_history_missing_generation: index 2"
 
 
-def test_offline_gates_include_schema_theta_manifest_and_receipt_audit():
+def test_offline_gates_include_schema_theta_manifest_receipt_and_fitness():
     names = [gate.name for gate in OFFLINE_GATES]
-    assert names[-4:] == [
+    assert names[-5:] == [
         "pack_schema",
         "theta_integrity",
         "artifact_manifest",
         "receipt_cmaes",
+        "fitness_history_sequence",
     ]
 
 

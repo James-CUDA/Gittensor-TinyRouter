@@ -147,7 +147,10 @@ def test_manifest_builder_raises_when_artifact_missing(tmp_path: Path):
 
 def test_offline_gates_include_manifest_and_receipt_cmaes():
     names = [gate.name for gate in OFFLINE_GATES]
-    assert names[-2:] == ["artifact_manifest", "receipt_cmaes"]
+    assert "artifact_manifest" in names
+    assert "receipt_cmaes" in names
+    assert names.index("artifact_manifest") < names.index("receipt_cmaes")
+    assert names.index("receipt_cmaes") < names.index("fitness_history_sequence")
 
 
 def test_load_manifest_returns_none_on_bad_json(tmp_path: Path):

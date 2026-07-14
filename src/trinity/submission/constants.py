@@ -28,3 +28,12 @@ DEFAULT_POOL_MODELS: tuple[str, ...] = (
     "minimax-m3",
     "deepseek-v4-flash",
 )
+
+# Agent-row pairwise cosine above this implies argmax-always-same-model collapse.
+HEAD_AGENT_COLLAPSE_COSINE: float = 0.999
+
+# Minimum ledger tokens per (generation × popsize) for volume advisory.
+LEDGER_MIN_TOKENS_PER_CANDIDATE: int = 150
+
+# At least this many receipt pool models must appear in the verified ledger.
+LEDGER_MIN_DISTINCT_MODELS: int = 2
