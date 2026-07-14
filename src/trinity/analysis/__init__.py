@@ -37,6 +37,12 @@ from trinity.analysis.generalization import (
     analyze_pair,
     overfit_verdict,
 )
+from trinity.analysis.reconcile import (
+    PerModelReconciliation,
+    ReconciliationSummary,
+    reconcile,
+    reconcile_files,
+)
 from trinity.analysis.sampling import (
     ModelSampling,
     SamplingSummary,
@@ -82,6 +88,10 @@ __all__ = [
     "GeneralizationGap",
     "analyze_pair",
     "overfit_verdict",
+    "PerModelReconciliation",
+    "ReconciliationSummary",
+    "reconcile",
+    "reconcile_files",
     "ModelSampling",
     "SamplingSummary",
     "solve_counts",
