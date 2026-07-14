@@ -119,6 +119,14 @@ def analyze(
     ``correct_answer`` reference (the shape ``analysis.agreement`` consumes). For each
     item the plurality vote is graded, and per-model / oracle accuracies are computed for
     context. ``score_fn`` defaults to ``reward.score_text``; inject one for offline tests.
+
+    Raises:
+        ValueError: If two items disagree about the model pool. A ragged pool would grade
+            each model's accuracy over its own item count while the oracle spans every
+            item, so a model present in only some items could report
+            ``best_single > oracle_any`` (an impossible invariant). As in
+            ``analysis.agreement``/``complementarity``/``sampling``, a ragged pool is
+            rejected rather than silently biased.
     """
     from trinity.orchestration import reward as _reward
 
@@ -128,10 +136,20 @@ def analyze(
     oracle: list[int] = []
     resolved = benchmark or "?"
     n = 0
+    expected_models: list[str] | None = None
     for item in items:
         answers = item.get("model_answers") or {}
         if not answers:
             continue
+        current_models = sorted(answers)
+        if expected_models is None:
+            expected_models = current_models
+        elif current_models != expected_models:
+            raise ValueError(
+                f"item {item.get('question_id', '?')!r} has models {current_models}, "
+                f"expected {expected_models}; a ragged pool grades per-model and oracle "
+                "accuracy over different denominators (best_single could exceed the oracle)"
+            )
         bench = benchmark or str(item.get("benchmark") or "")
         resolved = bench
         ref = item.get("correct_answer")
