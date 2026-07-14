@@ -164,7 +164,7 @@ bash scripts/setup_remote.sh
 bash scripts/run_remote.sh train --config configs/trinity.yaml
 
 # 4. evaluate on the benchmark suite
-bash scripts/run_remote.sh eval --config configs/benchmarks.yaml
+bash scripts/run_remote.sh eval --config configs/trinity.yaml
 ```
 
 See `README.md` for setup and `docs/SPEC.md` for the design these commands implement.
