@@ -150,13 +150,25 @@ def _final_answer_segment(text: str) -> str:
     return seg.strip().splitlines()[0].strip() if seg.strip() else ""
 
 
+#: Bracket characters a ``dyck_languages`` answer is composed of. Such an answer is
+#: ENTIRELY content (a sequence of closing brackets, e.g. ``"] )"``), so it must be
+#: compared as a sequence, not treated as strippable formatting noise.
+_BRACKETS = frozenset("()[]{}<>")
+
+
 def _normalize_exact(text: str) -> str:
     """Normalise a free-form answer for tolerant exact comparison.
 
-    Lower-cases, strips surrounding quotes/brackets/terminal punctuation, and
-    collapses internal whitespace — only formatting noise, never content.
+    Lower-cases, strips surrounding quotes/brackets/terminal punctuation, and collapses
+    internal whitespace — only formatting noise, never content. A **pure bracket sequence**
+    is the exception: the ``dyck_languages`` gold target is all closing brackets (e.g.
+    ``"] )"``), so it is compared whitespace-insensitively rather than stripped down to an
+    empty string — which made every dyck answer, correct or not, grade ``0.0``.
     """
     s = str(text).strip().lower()
+    compact = re.sub(r"\s+", "", s)
+    if compact and all(ch in _BRACKETS for ch in compact):
+        return compact
     s = s.strip(".\"'`()[]{} \t\n")
     s = re.sub(r"\s+", " ", s)
     return s
