@@ -124,7 +124,14 @@ def _load_mmlu_hf(split: str) -> list[Task] | None:
             answer_idx = int(answer_idx)
         except (TypeError, ValueError):
             continue
-        if not (0 <= answer_idx < len(_CHOICE_LETTERS)):
+        # The answer index must point at a REAL option of THIS row, and that
+        # option must have a letter. Bounding against len(_CHOICE_LETTERS) (8)
+        # instead of the row's own option count let a malformed row -- say 4
+        # choices with answer=7 -- through, producing a gold letter ("H") that
+        # indexes no existing option. A row that fails either bound is malformed
+        # and skipped.
+        n_options = len(list(choices))
+        if not (0 <= answer_idx < n_options) or answer_idx >= len(_CHOICE_LETTERS):
             continue
         tasks.append(
             Task(
