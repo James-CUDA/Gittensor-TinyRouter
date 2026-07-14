@@ -74,23 +74,48 @@ def load_splits(bench_dir: str | Path, password: str) -> tuple[dict[str, list], 
             problems.append(f"missing split file {fp.name}")
             splits[name] = []
             continue
-        data = _decrypt_file(fp, password)
+        try:
+            data = _decrypt_file(fp, password)
+        except Exception as exc:  # noqa: BLE001 — any decrypt/parse failure IS a problem
+            problems.append(f"{fp.name}: decryption failed ({type(exc).__name__})")
+            splits[name] = []
+            continue
+        if not isinstance(data, dict):
+            problems.append(
+                f"{fp.name}: decoded payload is {type(data).__name__}, expected a JSON object"
+            )
+            splits[name] = []
+            continue
         items = list(data.get("items") or [])
         splits[name] = items
         if data.get("seed") != protocol.SEALED_SEED:
             problems.append(f"{fp.name}: seed {data.get('seed')!r} != sealed {protocol.SEALED_SEED}")
-        if data.get("count") is not None and int(data["count"]) != len(items):
-            problems.append(f"{fp.name}: count {data.get('count')} != len(items) {len(items)}")
+        count = data.get("count")
+        if count is not None:
+            if isinstance(count, bool) or not isinstance(count, int):
+                problems.append(f"{fp.name}: count {count!r} is not an integer")
+            elif count != len(items):
+                problems.append(f"{fp.name}: count {count} != len(items) {len(items)}")
     return splits, problems
+
+
+def _load_meta(meta_path: Path) -> tuple[dict | None, str | None]:
+    """Read meta.json -> (meta, problem). Never raises on missing/corrupt input."""
+    if not meta_path.exists():
+        return None, f"missing {meta_path.name}"
+    try:
+        return json.loads(meta_path.read_text()), None
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+        return None, f"unreadable {meta_path.name}: {type(exc).__name__}"
 
 
 def verify_dir(bench_dir: str | Path, password: str) -> list[str]:
     """Full verification of a built benchmark directory. Empty list = verified."""
     bench_dir = Path(bench_dir)
-    meta_path = bench_dir / "meta.json"
-    if not meta_path.exists():
-        return [f"missing {meta_path.name}"]
-    meta = json.loads(meta_path.read_text())
+    meta, meta_problem = _load_meta(bench_dir / "meta.json")
+    if meta_problem is not None:
+        return [meta_problem]
+    assert meta is not None
 
     problems: list[str] = []
     hash_path = bench_dir / "hash.txt"
@@ -110,7 +135,10 @@ def verify_dir(bench_dir: str | Path, password: str) -> list[str]:
 
 def verify_meta_file(meta_path: str | Path) -> list[str]:
     """Offline self-consistency: validate meta.json alone (no password, no questions)."""
-    meta = json.loads(Path(meta_path).read_text())
+    meta, meta_problem = _load_meta(Path(meta_path))
+    if meta_problem is not None:
+        return [meta_problem]
+    assert meta is not None
     return protocol.verify_meta_selfconsistent(meta)
 
 
