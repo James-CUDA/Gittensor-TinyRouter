@@ -8,6 +8,7 @@ cherry-picked best against a mean and biases the R1/R2 and R4 verdicts toward TR
 No API calls, no GPU, no filesystem: `render` takes rows directly.
 """
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -187,3 +188,35 @@ def test_full_coverage_multi_model_compares_only_full_models():
     assert "| single: gpt5 (fixed) | 0.475 |" in summary
     assert "**R1/R2** (TRINITY avg > best fixed single avg): ✅ HOLDS (0.650 vs 0.560)" in summary
     assert "partial" not in summary
+
+
+# --------------------------------------------------------------------------- #
+# CLI: --json must honor --root, not write to a hardcoded "experiments/" path.
+# --------------------------------------------------------------------------- #
+def _write_eval(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "benchmark": "math500",
+        "results": {"TRINITY": 0.6, "single::deepseek": 0.5, "random_routing": 0.1},
+    }))
+
+
+def test_json_output_written_under_custom_root(tmp_path, monkeypatch):
+    root = tmp_path / "altroot"
+    _write_eval(root / "coordX" / "eval_math500.json")
+    monkeypatch.chdir(tmp_path)                 # so the old hardcoded path would miss/crash
+    monkeypatch.setattr(sys, "argv", ["results_table.py", "--root", str(root), "--json"])
+    rt.main()
+    out = root / "results.json"
+    assert out.exists()                                                # written under --root
+    assert not (tmp_path / "experiments" / "results.json").exists()    # not the hardcoded path
+    assert json.loads(out.read_text())[0]["benchmark"] == "math500"
+
+
+def test_json_output_default_root_unchanged(tmp_path, monkeypatch):
+    # Default --root=experiments still writes experiments/results.json (no behavior change).
+    _write_eval(tmp_path / "experiments" / "coordX" / "eval_math500.json")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["results_table.py", "--json"])
+    rt.main()
+    assert (tmp_path / "experiments" / "results.json").exists()
