@@ -97,5 +97,11 @@ def verified_ledger_total_usd(path: str | Path) -> float | None:
         if not valid:
             return None
         return sum_ledger_cost(path)
-    except OSError:
+    except (OSError, ValueError):
+        # OSError: the path is missing/unreadable. ValueError: the bytes are not
+        # valid UTF-8 (``verify_ledger_chain`` reads the file as UTF-8, so a
+        # corrupted/binary ledger raises ``UnicodeDecodeError`` — a ``ValueError``
+        # subclass — before the chain is even parsed). Both mean "cannot read a
+        # trustworthy total," which the contract reports as ``None`` rather than
+        # crashing the caller (``cost_report``, ``pack_submission`` receipts).
         return None

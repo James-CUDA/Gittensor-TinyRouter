@@ -99,6 +99,20 @@ def test_verified_ledger_total_usd_returns_none_for_missing_file(tmp_path: Path)
     assert OP.verified_ledger_total_usd(tmp_path / "missing.jsonl") is None
 
 
+def test_verified_ledger_total_usd_returns_none_for_non_utf8_file(tmp_path: Path):
+    """A corrupted/binary ledger is 'unreadable': return None, don't crash.
+
+    ``verify_ledger_chain`` reads the file as UTF-8, so non-UTF-8 bytes raise
+    ``UnicodeDecodeError`` (a ``ValueError`` subclass, not ``OSError``). The
+    documented contract is None on an unreadable path, matching the missing-file
+    case — the caller (cost_report / pack_submission receipts) must not see a
+    traceback for a corrupt file.
+    """
+    ledger = tmp_path / "corrupt.jsonl"
+    ledger.write_bytes(b"\xff\xfe not valid utf-8 \x00\x80\n")
+    assert OP.verified_ledger_total_usd(ledger) is None
+
+
 # --------------------------------------------------------------------------- #
 # pack_submission integration
 # --------------------------------------------------------------------------- #
