@@ -70,6 +70,39 @@ def test_confidence_informative_when_agreement_tracks_correctness():
     assert s.any_confidence_informative is True
 
 
+def test_abstention_gain_is_the_documented_mild_level_acc08_minus_acc10():
+    # abstention_gain is documented as acc@0.8 - acc@1.0 (drop the least-confident
+    # ~20%) -- the coverage one notch below full. Build a matrix where acc@0.8 and
+    # acc@0.5 differ so the level actually matters: 4 queries fully agree & right
+    # (conf 1.0), 2 agree & right (conf 0.8), 4 split & wrong (conf 0.6). Sorted by
+    # confidence the top-5 (coverage 0.5) are all correct -> acc@0.5 = 1.0, while the
+    # top-8 (coverage 0.8) pull in 2 wrong ones -> acc@0.8 = 0.75; acc@1.0 = 0.6.
+    rows = ([{"a": [1, 1, 1, 1, 1]}] * 4
+            + [{"a": [1, 1, 1, 1, 0]}] * 2      # 4/5 -> conf 0.8, majority-correct
+            + [{"a": [1, 1, 0, 0, 0]}] * 4)     # 2/5 -> conf 0.6, majority-wrong
+    p = analyze(_matrix(rows)).per_model[0]
+    assert p.accuracy_at_coverage[1.0] == pytest.approx(0.6)
+    assert p.accuracy_at_coverage[0.8] == pytest.approx(0.75)
+    assert p.accuracy_at_coverage[0.5] == pytest.approx(1.0)
+    # The documented mild level (0.8), NOT the most aggressive one (0.5).
+    assert p.abstention_gain == pytest.approx(0.15)
+    assert p.abstention_gain == pytest.approx(
+        p.accuracy_at_coverage[0.8] - p.accuracy_at_coverage[1.0]
+    )
+
+
+def test_abstention_gain_tracks_the_largest_sub_full_coverage_for_custom_tuples():
+    # For a custom coverage tuple the mild level generalizes to the largest sub-1.0
+    # coverage (0.9 here), not the smallest.
+    rows = ([{"a": [1, 1, 1, 1, 1]}] * 4
+            + [{"a": [1, 1, 1, 1, 0]}] * 2
+            + [{"a": [1, 1, 0, 0, 0]}] * 4)
+    p = analyze(_matrix(rows), coverages=(1.0, 0.9, 0.7, 0.5)).per_model[0]
+    assert p.abstention_gain == pytest.approx(
+        p.accuracy_at_coverage[0.9] - p.accuracy_at_coverage[1.0]
+    )
+
+
 def test_confidence_uninformative_when_agreement_anticorrelates():
     # high agreement on WRONG queries (0/5 -> confident but wrong), split on right ones:
     # ranking by confidence puts wrong answers first -> AURC no better than random.

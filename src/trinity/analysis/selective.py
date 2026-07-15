@@ -174,7 +174,14 @@ def analyze(
         aurc = float((1.0 - sel_acc).mean())
         random_aurc = 1.0 - base_acc
         acc_at = {c: _accuracy_at(sel_acc, c) for c in covs}
-        partial = min((c for c in covs if c < 1.0), default=1.0)
+        # abstention_gain is the documented mild-abstention lift acc@0.8 - acc@1.0
+        # (drop the least-confident ~20%): the coverage ONE NOTCH below full, i.e. the
+        # LARGEST sub-1.0 level, which for DEFAULT_COVERAGES=(1.0, 0.8, 0.5) is 0.8.
+        # ``min`` picked 0.5 -- the most aggressive half-abstention -- so the headline
+        # scalar reported acc@0.5 - acc@1.0 and overstated the marginal value of the
+        # confidence signal (the per-level accuracies are already in the render table).
+        # ``max`` restores the documented level and generalizes to any coverage tuple.
+        partial = max((c for c in covs if c < 1.0), default=1.0)
         abstention_gain = acc_at.get(partial, base_acc) - acc_at.get(1.0, base_acc)
         per_model.append(ModelSelective(
             model=models[i], base_accuracy=base_acc, aurc=aurc, random_aurc=random_aurc,
