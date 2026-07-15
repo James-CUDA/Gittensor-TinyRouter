@@ -629,12 +629,16 @@ async def evaluate_pr(pr_number: int, benchmark: str,
         print(f"\n  *** APPROVED *** — beats king by {composite_score - best_composite:+.4f}")
         _update_leaderboard(miner_name, generation, pr_number,
                             composite_score, per_benchmark)
+        report = _format_pr_report(miner_name, composite_score, best_composite,
+                                    composite_score - best_composite, per_benchmark)
+        print(f"\n{report}")
         return {
             "approved": True,
             "score": round(composite_score, 4),
             "best_score": round(composite_score, 4),
             "delta": round(composite_score - best_composite, 4),
             "per_benchmark": per_benchmark,
+            "report": report,
             "message": f"APPROVED: composite {composite_score:.4f} beats king {best_composite:.4f} by {composite_score - best_composite:+.4f} (margin {margin:.4f})",
         }
     else:
@@ -665,6 +669,26 @@ def _reject(reason: str, detail: str = "") -> dict:
         "delta": None,
         "message": msg,
     }
+
+
+def _format_pr_report(miner_name: str, composite: float, best_prev: float,
+                       delta: float, per_benchmark: dict) -> str:
+    """Format a per-benchmark Markdown report for a winning submission."""
+    lines = [
+        f"## 🏆 New King: {miner_name}",
+        "",
+        f"**Composite: {composite:.4f}** (beats previous king {best_prev:.4f} by {delta:+.4f})",
+        "",
+        "| Benchmark | Score | Cached | Live | Avg Turns |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for bench, v in sorted(per_benchmark.items()):
+        lines.append(
+            f"| {bench} | {v['score']:.4f} | {v['hidden_acc']:.4f} | "
+            f"{v['live_acc']:.4f} | {v['avg_turns']:.2f} |"
+        )
+    lines.append("")
+    return "\n".join(lines)
 
 
 def main() -> None:
