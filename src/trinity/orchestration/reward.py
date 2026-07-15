@@ -712,6 +712,29 @@ def _strip_choice_font_wrappers(text: str) -> str:
     return text
 
 
+# Markdown emphasis around the answer letter — ``**B**``, ``*B*``, ``__B__``, ``_B_``.
+# Bolding the final choice in Markdown is one of the most common LLM output styles,
+# and the delimiter sits between the "answer is" cue and the letter, so the choice
+# patterns below never reach the letter (a false negative). Unwrap it exactly as the
+# LaTeX emphasis above is unwrapped. Only a balanced pair hugging non-space content is
+# unwrapped (the ``(?=\S)``/``(?<=\S)`` guards), so a lone ``*`` or ``_`` in prose is
+# left intact and never fabricates a choice. The longer ``**``/``__`` alternatives come
+# first so a bold run is consumed whole rather than as two italic runs.
+_MD_EMPHASIS_RE = re.compile(r"(\*\*|\*|__|_)(?=\S)(.+?)(?<=\S)\1", re.DOTALL)
+
+
+def _strip_markdown_emphasis(text: str) -> str:
+    """Unwrap Markdown bold/italic (``**x**``, ``*x*``, ``__x__``, ``_x_``) to content.
+
+    Applied repeatedly so a nested/mixed wrapper (``**_B_**``) fully collapses.
+    """
+    prev = None
+    while prev != text:
+        prev = text
+        text = _MD_EMPHASIS_RE.sub(r"\2", text)
+    return text
+
+
 # Unambiguous commitment phrasings. A letter carried by any of these IS the answer
 # the model is asserting, so the one that occurs LAST in the text is the committed
 # answer (a model may reason toward one choice in prose and then commit another with
@@ -756,8 +779,11 @@ def extract_choice_letter(text: str) -> str | None:
     if not text:
         return None
     # Unwrap LaTeX font/emphasis commands first, so a boxed but formatted letter
-    # (``\boxed{\text{B}}``, ``\textbf{C}``) is matched exactly like a bare one.
+    # (``\boxed{\text{B}}``, ``\textbf{C}``) is matched exactly like a bare one, then
+    # Markdown emphasis (``**B**``, ``*C*``) so the equally-common bold/italic answer
+    # is read the same way (else ``The answer is **B**`` extracts nothing).
     text = _strip_choice_font_wrappers(text)
+    text = _strip_markdown_emphasis(text)
     # Among the unambiguous commitment phrasings, the committed answer is the one
     # that occurs LAST in the text — a model may reason toward one choice and then
     # commit another with a different phrasing (most often interim prose + a final
