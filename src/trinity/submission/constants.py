@@ -17,7 +17,7 @@ MIN_TRAINING_COST_USD: float = 1.0  # just require cost > 0 (was 15.0 — too st
 MAX_WEIGHT_MAGNITUDE: float = 1e6
 DUPLICATE_HEAD_COSINE_THRESHOLD: float = 0.99  # lowered from 0.999 (was too tight)
 
-RATE_LIMIT_WINDOW_DAYS: int = 7
+RATE_LIMIT_WINDOW_DAYS: int = 1  # 1/day for launch — tighten later if probing/spam becomes an issue
 RATE_LIMIT_MAX_SUBMISSIONS: int = 1
 
 # ---- Composite competition ----

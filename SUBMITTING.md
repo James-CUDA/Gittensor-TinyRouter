@@ -142,7 +142,7 @@ is checked against the current king's composite + the 0.02 margin.
 
 | Rule | Detail |
 |---|---|
-| **Submission rate** | 1 submission per week (the head covers all 3 benchmarks) |
+| **Submission rate** | 1 submission per day (the head covers all 3 benchmarks) |
 | **Original work** | You must train the head yourself. Every submission is cosine-similarity checked against all previous submissions and rejected if copied |
 | **Hidden benchmarks** | The evaluation questions are NEVER revealed. Do not ask for them |
 | **Score feedback** | Winners get full per-benchmark results. Losers get ONLY the composite score + delta — no per-component breakdown (prevents probing) |

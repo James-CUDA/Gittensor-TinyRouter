@@ -197,13 +197,13 @@ REJECTED: composite 0.789 does not beat king 0.801 by margin 0.020
 ```
 
 The PR is merged on a win (TAO flows via Gittensor) or closed on a loss.
-Either way, your weekly submission slot is consumed.
+Either way, your daily submission slot is consumed.
 
 ---
 
 ## Step 8: Iterate
 
-Wait 7 days, then resubmit with an improved head:
+Wait 24 hours, then resubmit with an improved head:
 
 ```bash
 # Train with more generations, different seed, or warm-start

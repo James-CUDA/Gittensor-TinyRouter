@@ -41,7 +41,7 @@ submissions/your-name/1/
 | Train the head + SVF via CMA-ES (or any method) | Modify the frozen encoder (Qwen3-0.6B) |
 | Choose your training data, seed, hyperparameters | Modify the hidden benchmark questions |
 | Use warm-start, shaped fitness, any training trick | Modify the grader (`reward.py`) |
-| Submit multiple generations (1 per week) | Submit per-benchmark heads (one head across all 3) |
+| Submit multiple generations (1 per day) | Submit per-benchmark heads (one head across all 3) |
 | Inspect the public train split | Probe the hidden eval/audit/live splits |
 
 ---
@@ -73,9 +73,9 @@ General-improvement PRs (bug fixes, new adapters, docs) are welcome but
 | Fabricating a training receipt | Gate 4 rejects (cost must be > $0 with ≥ 1 fitness entry) |
 | Forging cost in the ledger | Gate 5 rejects (hash-chain verification) |
 | Overfitting to the hidden eval (eval−audit gap > 0.10) | Gate 5 hard-rejects |
-| Submitting more than once per week | Gate 1 rejects |
+| Submitting more than once per day | Gate 1 rejects |
 | Modifying frozen files in a submission PR | Rejected by maintainer |
-| Probing the hidden benchmark (repeated losing submissions to extract per-component scores) | Only composite + delta revealed on loss; rate-limited weekly |
+| Probing the hidden benchmark (repeated losing submissions to extract per-component scores) | Only composite + delta revealed on loss; rate-limited daily |
 
 ---
 
@@ -117,7 +117,7 @@ else:
 
 | # | Gate | When | What it catches |
 |---|---|---|---|
-| 1 | Rate limit (1/week) | Pre-eval | Submission flooding |
+| 1 | Rate limit (1/day) | Pre-eval | Submission flooding |
 | 2 | Weight sanity (shape, NaN/Inf, not all-zeros) | Pre-eval | Garbage submissions |
 | 3 | Duplicate detection (cosine < 0.99) | Pre-eval | Copied heads |
 | 4 | Receipt exists (cost > 0, ≥ 1 fitness entry) | Pre-eval | No training evidence |
@@ -127,7 +127,7 @@ else:
 
 ## Submission rate
 
-- **1 submission per week** (7-day rolling window, enforced by Gate 1).
+- **1 submission per day (24-hour rolling window, enforced by Gate 1), enforced by Gate 1).
 - The slot is consumed when Gate 1 passes — **even if later gates fail or the
   score loses**. This prevents probing via repeated losing submissions.
 - Generation number auto-increments: `submissions/your-name/1/`, `2/`, `3/`...
@@ -182,7 +182,7 @@ No. They are AES-256-GCM encrypted and never revealed. The sealed seed (`2718281
 The margin rule (≥ 0.02) prevents ties on noise. If the composite exactly equals king + 0.02, the first to submit wins (king-of-the-hill).
 
 **Can I retrain and resubmit?**
-Yes, after 7 days. Each submission consumes one weekly slot regardless of outcome.
+Yes, after 24 hours. Each submission consumes one daily slot regardless of outcome.
 
 **How is TAO calculated?**
 TAO distribution is governed by the [Gittensor subnet weights](https://github.com/entrius/gittensor), not by this repo. This repo determines the king; the subnet determines emissions.

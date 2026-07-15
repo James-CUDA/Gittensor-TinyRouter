@@ -55,7 +55,7 @@ rejects immediately at zero cost.
 
 | Gate | What it checks | Source |
 |---|---|---|
-| **1. Rate limit** | ≤ 1 submission per miner per 7 days | `submission/gates.py:check_rate_limit` |
+| **1. Rate limit** | ≤ 1 submission per miner per 24 hours | `submission/gates.py:check_rate_limit` |
 | **2. Weight validation** | Head shape `(6, 1024)`, SVF shape `(7168,)`, no NaN/Inf, norm > 0.001 | `submission/gates.py:validate_weights` |
 | **3. Duplicate detection** | Cosine similarity < 0.999 vs all prior submissions + current king | `submission/gates.py:check_duplicate` |
 | **4. Receipt plausibility** | Cost ≥ $15, ≥ 3 fitness entries, gen-0 fitness ≤ 0.98, non-flat, non-monotonic, `best_fitness` matches history peaks | `submission/gates.py:validate_receipt` |
@@ -188,7 +188,7 @@ On approval:
 On rejection:
 - Only the composite score + delta are revealed (no per-component breakdown)
 - The PR is closed
-- The weekly submission slot is still consumed (prevents probing)
+- The daily submission slot is still consumed (prevents probing)
 
 ---
 
