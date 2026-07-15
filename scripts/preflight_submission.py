@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Run offline anti-cheat gates on a routing-head submission before opening a PR.
+"""Run offline pre-eval gates on a routing-head submission.
 
-Mirrors ``scripts/pr_eval.py`` gates 1–7 (rate limit, weights, duplicate,
-receipt plausibility, ledger/receipt cost consistency, pack schema,
-theta integrity) with **no GPU** and **no OpenRouter API** calls. Use this
-after ``pack_submission.py`` to catch rejections locally.
+Runs the 4 offline gates (rate limit, weight sanity, duplicate detection,
+receipt) with **no GPU** and **no OpenRouter API** calls. The submission bot
+(.github/workflows/submission-check.yml) calls this automatically on every
+submission PR. Miners can also run it locally before opening a PR.
 
 Usage::
 
-    export TRINITY_COST_LEDGER=~/trinity/cost_ledger.jsonl   # optional, gate 5
-    python scripts/preflight_submission.py --submission alice/1 --benchmark math500
+    python scripts/preflight_submission.py --submission alice/1 --benchmark composite
 """
 from __future__ import annotations
 
@@ -31,7 +30,7 @@ def main() -> None:
         required=True,
         help="Path under submissions/, e.g. alice/1",
     )
-    ap.add_argument("--benchmark", default="math500", help="Benchmark name (math500 or mmlu)")
+    ap.add_argument("--benchmark", default="composite", help="Benchmark name")
     ap.add_argument(
         "--ledger",
         default=None,
