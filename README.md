@@ -68,6 +68,7 @@ scores. A new king must beat the previous king by **≥ 0.02** (2 percentage poi
 | [`docs/EVALUATION_PIPELINE.md`](docs/EVALUATION_PIPELINE.md) | How scoring works (every stage) |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Repo structure + design principles |
 | [`docs/REPRODUCTION_GUIDE.md`](docs/REPRODUCTION_GUIDE.md) | End-to-step walkthrough |
+| [`docs/GLOSSARY.md`](docs/GLOSSARY.md) | Oracle-ceiling metrics + terms |
 | [`leaderboard.json`](leaderboard.json) | Current king + history |
 
 ## Baselines (what to beat)
