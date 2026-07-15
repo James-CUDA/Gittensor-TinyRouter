@@ -107,14 +107,33 @@ def load_leaderboard(path: str | Path) -> dict[str, Any]:
 
     Best-effort: a missing or unparseable file yields the empty shape rather than
     raising, so a caller can report "no leaderboard yet" without special-casing.
+
+    Supports two schemas:
+
+    * **Legacy** — ``{"benchmarks": {"<name>": <entry>, ...}}``
+    * **Competition** — ``{"competition": {"best_per_benchmark": {"<name>": <entry>, ...}}}``
+
+    When both are present the legacy key takes precedence.
     """
     try:
         data = json.loads(Path(path).read_text())
     except (OSError, ValueError):
         return {"benchmarks": {}}
-    if not isinstance(data, dict) or not isinstance(data.get("benchmarks"), dict):
+    if not isinstance(data, dict):
         return {"benchmarks": {}}
-    return data
+
+    # Legacy / hybrid: top-level "benchmarks" dict is authoritative.
+    if isinstance(data.get("benchmarks"), dict):
+        return data
+
+    # Competition schema: extract per-benchmark entries from competition block.
+    competition = data.get("competition", {})
+    if isinstance(competition, dict):
+        bpb = competition.get("best_per_benchmark", {})
+        if isinstance(bpb, dict):
+            return {"benchmarks": dict(bpb)}
+
+    return {"benchmarks": {}}
 
 
 def _target_from_entry(benchmark: str, entry: Mapping[str, Any]) -> BenchmarkTarget:

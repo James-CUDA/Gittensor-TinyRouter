@@ -370,7 +370,6 @@ def _empty_bench_entry() -> dict:
         "best_single_model": None,
         "oracle_ceiling": None,
         "history": [],
-        "attempts": [],
     }
 
 
@@ -396,6 +395,17 @@ def _record_attempt(benchmark: str, miner_name: str, generation: int,
         bench_entry["attempts"] = [
             dict(entry) for entry in bench_entry.get("history", [])
         ]
+        # For the composite benchmark, _update_leaderboard writes winning history
+        # to competition.history, NOT benchmarks.composite.history.  Pull those
+        # entries in too so a recent competition winner remains rate-limited.
+        if benchmark == "composite":
+            comp_history = lb.get("competition", {}).get("history", [])
+            seen_keys = {(e.get("miner"), e.get("pr")) for e in bench_entry["attempts"]}
+            for entry in comp_history:
+                key = (entry.get("miner"), entry.get("pr"))
+                if key not in seen_keys:
+                    bench_entry["attempts"].append(dict(entry))
+                    seen_keys.add(key)
     already = any(
         e.get("miner") == miner_name and e.get("pr") == pr_number
         for e in bench_entry["attempts"]
