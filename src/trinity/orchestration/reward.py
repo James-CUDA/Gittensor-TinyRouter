@@ -675,7 +675,9 @@ def math_equal(a: str | None, b: str | None, *, abs_tol: float = 1e-6) -> bool:
     # so "005" does not match "5" or "009".  Only apply to all-digit strings
     # to avoid blocking legitimate comparisons like "0.5" vs "1/2".
     def _is_zero_padded(s: str) -> bool:
-        return s[0] == "0" and len(s) > 1 and s.isdigit()
+        # Length first: empty probe strings (adapter conformance `_BINARY_PROBES`)
+        # would IndexError on `s[0]` otherwise — regression from #319/#331.
+        return len(s) > 1 and s[0] == "0" and s.isdigit()
 
     if _is_zero_padded(na) or _is_zero_padded(nb):
         return False
@@ -697,8 +699,8 @@ def _sympy_equal(a: str, b: str) -> bool:
     # (e.g. "005" vs "5", or "05" vs "09").  AIME-style zero-padded
     # answers should be compared as strings, not as numeric values.
     # Only applies to all-digit strings to preserve "0.5" etc.
-    if (a[0] == "0" and len(a) > 1 and a.isdigit()) or \
-       (b[0] == "0" and len(b) > 1 and b.isdigit()):
+    if (len(a) > 1 and a[0] == "0" and a.isdigit()) or \
+       (len(b) > 1 and b[0] == "0" and b.isdigit()):
         return False
     try:  # guarded import: local machine may lack sympy
         import sympy

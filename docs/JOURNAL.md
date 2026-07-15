@@ -18,6 +18,26 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-07-15 — math_equal `_is_zero_padded` IndexError on empty answers (CI conformance)  #mistake #repro
+**Context:** CI `pytest tests/` failed `test_real_registry_is_conformant` /
+`test_render_pass_and_fail` with `math500.score_output_binary: raised IndexError:
+string index out of range`.
+**Expected:** scoring an empty probe (`conformance._BINARY_PROBES` starts with `""`)
+returns `0.0` for math500 — binary, no exception.
+**Actual:** `adapter.score_output("", ref)` → `math_equal("", ref)` →
+`_is_zero_padded("")` evaluated `s[0] == "0"` before `len(s) > 1`, raising
+`IndexError`. The auditor catches the raise as a contract failure.
+**Root cause:** the #319/#331 leading-zero guard indexed `s[0]` with short-circuit
+order that assumes a non-empty string (`s[0] and len(s) > 1 and ...`). Empty
+candidates are routine (failed extraction falls back to the whole candidate text,
+which can be `""`).
+**Fix / decision:** check `len(s) > 1` before `s[0]`. Covered by
+`tests/test_reward_math_leading_zero.py` (empty strings, AIME pad rejection,
+`score_text("math500", "", "42") == 0.0`).
+**Follow-up:** none for this path; `_sympy_equal` already guards `if not a or not b`.
+
+---
+
 ## 2026-07-13 — verified_ledger_total_usd crashed on a non-UTF-8 ledger instead of returning None  #mistake #finding
 **Context:** auditing the offline cost-accounting path (`llm/openrouter_pricing.py`) that feeds
 `scripts/cost_report.py --ledger` and `pack_submission._estimate_cost()` (the receipt cost a
