@@ -52,6 +52,14 @@ def test_answers_agree_choice_and_fallback():
     assert answers_agree("toy", "X", "Y") is False
 
 
+def test_answers_agree_resolves_benchmark_aliases_for_code():
+    # livecodebench_v6 is graded as code via resolve_benchmark; clustering must match.
+    m2 = "Solution:\n```python\ndef solve():\n    return 42\n```"
+    m3 = "```python\ndef solve():\n    return 42\n```"
+    assert answers_agree("livecodebench", m2, m3) is True
+    assert answers_agree("livecodebench_v6", m2, m3) is True
+
+
 # --------------------------------------------------------------------------- #
 # plurality_answer
 # --------------------------------------------------------------------------- #
