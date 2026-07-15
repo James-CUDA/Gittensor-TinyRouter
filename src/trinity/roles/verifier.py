@@ -41,10 +41,16 @@ __all__ = ["VERDICT_RE", "parse_verdict", "extract_diagnosis"]
 # *starts* with ACCEPT/REVISE ("VERDICT: ACCEPTABLE only if fixed", "ACCEPTED with
 # reservations", "REVISED the plan") is NOT read as a committed verdict. A plain
 # ``\b`` cannot be used here: an underscore is a word character, so ``\b`` would
-# reject the common italic wrapper ``VERDICT: __REVISE__``. The negative lookahead
-# blocks only a trailing *letter*, so closing markdown (``**``/``__``/`` ` ``) and
-# punctuation are still fine.
-VERDICT_RE = re.compile(r"VERDICT\b[\s:*_`~-]*(ACCEPT|REVISE)(?![A-Za-z])", re.IGNORECASE)
+# reject both the common italic wrapper ``VERDICT: __REVISE__`` and the keyword
+# itself wrapped in emphasis like ``__VERDICT__``. The negative lookahead blocks
+# only a trailing *letter*, so closing markdown (``**``/``__``/`` ` ``) and
+# punctuation are still fine. Leading underscores before VERDICT are handled by
+# ``(?:(?<=^)|(?<=\s)|(?<=[\s_*`~]))`` which accepts ``__VERDICT__``, ``_VERDICT_``,
+# ``**VERDICT**``, ``VERDICT`` at start of line, and more.
+VERDICT_RE = re.compile(
+    r"(?:(?<=^)|(?<=\s)|(?<=_)|(?<=\*)|(?<=`)|(?<=~))VERDICT[\s:*_`~-]*(ACCEPT|REVISE)(?![A-Za-z])",
+    re.IGNORECASE,
+)
 
 
 def parse_verdict(text: str) -> str | None:
