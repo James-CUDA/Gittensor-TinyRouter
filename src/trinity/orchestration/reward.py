@@ -676,6 +676,13 @@ def math_equal(a: str | None, b: str | None, *, abs_tol: float = 1e-6) -> bool:
         if math.isclose(fa, fb, rel_tol=0.0, abs_tol=abs_tol):
             return True
 
+    # Leading-zero guard: sympy treats "05" == "5" and "09" == "9", but for
+    # AIME (zero-padded 3-digit answers 000-999) these are genuinely different.
+    # If both look like integers and differ only in leading zeros, reject.
+    if na and nb and na.lstrip("0").isdigit() and nb.lstrip("0").isdigit():
+        if na.lstrip("0") == nb.lstrip("0") and na != nb:
+            return False
+
     return _sympy_equal(na, nb)
 
 
