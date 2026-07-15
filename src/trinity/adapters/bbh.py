@@ -26,6 +26,7 @@ from typing import Any
 
 from trinity.types import Task
 
+from .answer_span import final_answer_segment
 from .base import BenchmarkAdapter, TaskType
 from .registry import register_adapter
 
@@ -133,21 +134,9 @@ def build_bbh_prompt(question: str, answer_type: str) -> str:
 # --------------------------------------------------------------------------- #
 # Scoring (pure text; no execution)
 # --------------------------------------------------------------------------- #
-_ANSWER_LEAD = re.compile(r"(?:final\s+)?answer\s*(?:is|:)\s*(.+)", re.IGNORECASE | re.DOTALL)
-
-
-def _final_answer_segment(text: str) -> str:
-    """Pull the answer portion out of a (possibly chatty) exact-match output.
-
-    Prefers the text after an explicit ``"answer is"`` / ``"answer:"`` lead; else the
-    last non-empty line (final answers come last). Returns ``""`` for empty input.
-    """
-    if not text:
-        return ""
-    m = _ANSWER_LEAD.search(text)
-    seg = m.group(1) if m else next((ln for ln in reversed(text.splitlines()) if ln.strip()), "")
-    # Keep only the first line of the captured segment (the answer proper).
-    return seg.strip().splitlines()[0].strip() if seg.strip() else ""
+# The answer extractor is shared with the DROP adapter (see ``answer_span``): it
+# takes the LAST "answer is"/"answer:" lead, because this adapter's prompt asks the
+# model to think step by step and only then end with "Answer: <answer>".
 
 
 #: Bracket characters a ``dyck_languages`` answer is composed of. Such an answer is
@@ -200,7 +189,7 @@ def score_bbh(candidate: str, reference: Any) -> float:
         gold_letter = extract_choice_letter(gold)
         return 1.0 if cand_letter is not None and cand_letter == gold_letter else 0.0
 
-    cand = _normalize_exact(_final_answer_segment(candidate))
+    cand = _normalize_exact(final_answer_segment(candidate))
     return 1.0 if cand and cand == _normalize_exact(gold) else 0.0
 
 

@@ -21,6 +21,7 @@ from typing import Any
 
 from trinity.types import Task
 
+from .answer_span import final_answer_segment
 from .base import BenchmarkAdapter, TaskType
 from .registry import register_adapter
 
@@ -88,20 +89,9 @@ def build_drop_prompt(passage: str, question: str) -> str:
 # --------------------------------------------------------------------------- #
 _ARTICLES = re.compile(r"\b(?:a|an|the)\b", re.IGNORECASE)
 _PUNCT = re.compile(r"[^\w\s]")
-_ANSWER_LEAD = re.compile(r"(?:final\s+)?answer\s*(?:is|:)\s*(.+)", re.IGNORECASE | re.DOTALL)
-
-
-def _final_answer_segment(text: str) -> str:
-    """Pull the answer portion out of a (possibly chatty) output.
-
-    Prefers the text after an explicit ``"answer is"`` / ``"answer:"`` lead; else the
-    last non-empty line. Returns ``""`` for empty input.
-    """
-    if not text:
-        return ""
-    m = _ANSWER_LEAD.search(text)
-    seg = m.group(1) if m else next((ln for ln in reversed(text.splitlines()) if ln.strip()), "")
-    return seg.strip().splitlines()[0].strip() if seg.strip() else ""
+# The answer extractor is shared with the BBH adapter (see ``answer_span``): it
+# takes the LAST "answer is"/"answer:" lead, because this adapter's prompt asks the
+# model to reason first and only then end with "Answer: <answer>".
 
 
 #: Surrounding punctuation stripped from a token, EXCLUDING the signs ``+``/``-`` — a
@@ -182,7 +172,7 @@ def score_drop(candidate: str, reference: Any) -> float:
         gold = [str(reference)]
     if not any(g.strip() for g in gold):
         return 0.0
-    _em, f1 = drop_em_f1(_final_answer_segment(candidate), gold)
+    _em, f1 = drop_em_f1(final_answer_segment(candidate), gold)
     return 1.0 if f1 >= 1.0 - 1e-9 else 0.0
 
 
