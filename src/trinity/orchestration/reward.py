@@ -673,9 +673,13 @@ def math_equal(a: str | None, b: str | None, *, abs_tol: float = 1e-6) -> bool:
     fa = _as_number(na)
     fb = _as_number(nb)
     if fa is not None and fb is not None:
-        if math.isclose(fa, fb, rel_tol=0.0, abs_tol=abs_tol):
-            return True
+        # Both sides are genuine numbers: the numeric comparison is definitive.
+        # Do NOT fall through to _sympy_equal, whose implicit-multiplication parse
+        # collapses a leading-zero literal ("007", "042") to 0 (0*4*2) and would
+        # grade 5 == 9 — corrupting AIME, whose answers are zero-padded 0-999.
+        return math.isclose(fa, fb, rel_tol=0.0, abs_tol=abs_tol)
 
+    # Symbolic bridge, only when at least one side is non-numeric (pi, sqrt, ...).
     return _sympy_equal(na, nb)
 
 

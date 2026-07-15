@@ -36,6 +36,38 @@ def test_math_equal_does_not_merge_off_by_one_millions():
     assert R.math_equal("999999999", "1000000000") is False
 
 
+# --- the leading-zero bug: sympy's implicit-multiplication parse collapses "042" -> 0 ---
+
+
+@pytest.mark.parametrize(
+    "candidate,reference",
+    [
+        ("007", "042"),                 # 7 vs 42
+        ("0", "007"),                   # 0 vs 7
+        ("05", "09"),                   # 5 vs 9 (AIME-style zero-padded)
+        (r"\boxed{05}", "09"),
+        (r"\boxed{042}", "007"),
+    ],
+)
+def test_leading_zero_numbers_are_not_all_equal(candidate, reference):
+    # Both parse to a genuine (different) number, so the numeric comparison is
+    # definitive; the sympy fallback must not merge them by collapsing to 0.
+    assert R.math_equal(candidate, reference) is False
+
+
+def test_aime_zero_padded_wrong_answer_scores_zero():
+    # AIME references are canonically zero-padded 0-999; a wrong answer must score 0.
+    assert R.score_text("aime", r"\boxed{05}", "09") == 0.0
+    assert R.score_text("math500", "007", "042") == 0.0
+
+
+def test_leading_zero_equal_numbers_still_match():
+    # True positives preserved: the float bridge parses leading zeros correctly.
+    assert R.math_equal("007", "7") is True
+    assert R.math_equal("042", "42") is True
+    assert R.score_text("aime", r"\boxed{042}", "42") == 1.0
+
+
 # --- preserved behaviour: exact and rounded-representation matches still hold ---
 
 
