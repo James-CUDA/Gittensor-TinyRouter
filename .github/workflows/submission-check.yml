@@ -82,9 +82,9 @@ jobs:
           | Gate | Status |
           |---|---|
           | 1. Rate limit (1/day) | ✅ |
-          | 2. Weight sanity | ✅ |
-          | 3. Duplicate detection | ✅ |
-          | 4. Receipt exists | ✅ |
+          | 2. Weight sanity (shape, NaN/Inf) | ✅ |
+          | 3. Duplicate detection (cosine < 0.99) | ✅ |
+          | 4. Receipt (cost > $0, > 2 fitness entries) | ✅ |
 
           _(Gate 5: overfit check runs during full eval)_"
           else
