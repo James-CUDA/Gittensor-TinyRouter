@@ -1135,8 +1135,22 @@ def _run_functional_test(
         "    _fn = getattr(Solution(), _name)\n"
         "else:\n"
         "    raise SystemExit('functional entry point not found: ' + _name)\n"
+        "\n"
+        "def _values_match(a, b):\n"
+        "    import math\n"
+        "    if type(a) != type(b):\n"
+        "        return False\n"
+        "    if isinstance(a, float):\n"
+        "        return math.isclose(a, b, rel_tol=1e-5, abs_tol=1e-5)\n"
+        "    if isinstance(a, (list, tuple)):\n"
+        "        return len(a) == len(b) and all(\n"
+        "            _values_match(x, y) for x, y in zip(a, b)\n"
+        "        )\n"
+        "    return a == b\n"
+        "\n"
         "_got = _fn(*_args)\n"
-        "assert _got == _expected, 'got %r, expected %r' % (_got, _expected)\n"
+        "assert _values_match(_got, _expected), "
+        "'got %r, expected %r' % (_got, _expected)\n"
     )
     return _exec_script(code + harness, stdin_data="", timeout_s=timeout_s)
 
