@@ -133,6 +133,24 @@ def test_bare_string_reference_is_exact_match():
     assert score_bbh("Answer: 17", "16") == 0.0
 
 
+def test_exact_match_dyck_languages_bracket_answer():
+    # dyck_languages gold answers are pure closing-bracket sequences; the old normalizer
+    # stripped every bracket, collapsing them to "" so even a correct answer scored 0.0.
+    ref = {"answer": "] )", "answer_type": "exact_match", "subtask": "dyck_languages"}
+    assert score_bbh("Reason...\nAnswer: ] )", ref) == 1.0        # correct
+    assert score_bbh("Answer: ]  )", ref) == 1.0                  # spacing-insensitive
+    assert score_bbh("Answer: ] ]", ref) == 0.0                   # wrong bracket sequence
+    assert score_bbh("Answer: ) ]", ref) == 0.0                   # wrong order
+    # multi-bracket and angle-bracket sequences also survive normalization
+    assert score_bbh("Answer: ] } )", {"answer": "] } )", "answer_type": "exact_match"}) == 1.0
+    assert score_bbh("Answer: > ]", {"answer": "> ]", "answer_type": "exact_match"}) == 1.0
+
+
+def test_exact_match_wrapped_parens_still_strip():
+    # a wrapping paren around a NON-bracket answer is still formatting noise: "(4)" -> "4".
+    assert score_bbh("Answer: (4)", {"answer": "4", "answer_type": "exact_match"}) == 1.0
+
+
 # --- adapter wiring ---
 
 
