@@ -70,6 +70,15 @@ def test_markdown_formatted_verdicts_parse():
     assert parse_verdict("VERDICT: `REVISE`") == "REVISE"
     assert parse_verdict("#### VERDICT: ACCEPT") == "ACCEPT"
     assert parse_verdict("VERDICT - ACCEPT") == "ACCEPT"
+    # Underscore emphasis on the keyword itself (``\b`` misses ``VERDICT__``).
+    assert parse_verdict("__VERDICT__ ACCEPT") == "ACCEPT"
+    assert parse_verdict("_VERDICT_ REVISE") == "REVISE"
+    assert parse_verdict("__VERDICT__: ACCEPT") == "ACCEPT"
+
+
+def test_underscore_keyword_does_not_accept_verdicts_plural():
+    assert parse_verdict("VERDICTS ACCEPT") is None
+    assert parse_verdict("__VERDICTS__ ACCEPT") is None
 
 
 def test_markdown_does_not_defeat_the_prefix_word_guard():
