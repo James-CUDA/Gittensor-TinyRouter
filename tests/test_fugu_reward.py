@@ -41,6 +41,14 @@ def test_committed_answer_recovers_from_a_non_boxed_final_step():
     assert is_correct(run, MATH) == 1  # not a false negative
 
 
+def test_empty_boxed_final_does_not_shadow_a_real_earlier_answer():
+    # A later turn that re-boxes empty ("\boxed{}") must not be selected as the
+    # committed answer over an earlier turn that boxed the real value.
+    run = _run("Reformatting: \\boxed{}", steps=[_step("\\boxed{4}")])
+    assert committed_answer("math500", run) == "\\boxed{4}"
+    assert is_correct(run, MATH) == 1  # the produced answer 4 is not thrown away
+
+
 def test_dollar_amount_is_not_a_false_negative():
     # Regression: "$18.90" gold vs "18.90" answer must grade correct (the shared
     # grader stripped bare "$" before "\\$", leaving "\\18.90"). Surfaced by the
@@ -120,6 +128,33 @@ def test_choice_weak_cues_never_override_a_committed_answer():
     # With no committed-answer phrasing, the weaker cues still resolve a letter.
     assert R.extract_choice_letter("Option C") == "C"
     assert R.extract_choice_letter("C)") == "C"
+
+
+def test_choice_letter_wrapped_in_markdown_emphasis_is_read():
+    # Bolding/italicising the final answer letter is a common model format; the
+    # extractor already unwraps the LaTeX equivalent (\textbf{B}) and roles.verifier
+    # tolerates "**VERDICT:** ACCEPT", so the Markdown letter must be read too.
+    from trinity.orchestration import reward as R
+
+    assert R.extract_choice_letter("The answer is **B**.") == "B"
+    assert R.extract_choice_letter("Answer: **D**") == "D"
+    assert R.extract_choice_letter("The answer is *E*") == "E"
+    assert R.extract_choice_letter("answer is __A__") == "A"
+    assert R.extract_choice_letter("The answer is `F`") == "F"
+    assert R.extract_choice_letter("**B**") == "B"
+    # End-to-end: a bolded correct letter is not a false negative.
+    assert R.score_text("mmlu", "The answer is **B**.", "B") == 1.0
+    assert R.score_text("mmlu", "The answer is **B**.", "C") == 0.0
+
+
+def test_markdown_emphasis_strip_does_not_invent_choices():
+    # The unwrap must not create spurious answers: snake_case identifiers, and
+    # emphasis around a NON-committed letter, stay non-answers / respect the commit.
+    from trinity.orchestration import reward as R
+
+    assert R.extract_choice_letter("MAX_A_VAL is the constant") is None
+    assert R.extract_choice_letter("the variable A_B_C appears") is None
+    assert R.extract_choice_letter("I think **A** is wrong; the answer is C.") == "C"
 
 
 if __name__ == "__main__":

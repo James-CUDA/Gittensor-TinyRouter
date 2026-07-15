@@ -169,8 +169,14 @@ def union_oracle(matrices: Sequence[dict], *, threshold: float = 0.5) -> UnionOr
         return UnionOracleSummary([], 0, [], {}, None, 0.0, 0.0, 0.0, 0.0, None)
 
     models = covered[0].models
+    # Compare model SETS, not ordered lists: the contract rejects a RAGGED pool
+    # (a model missing from some benchmark), and the downstream equal-weight
+    # average looks each accuracy up BY NAME, so a benchmark that lists the same
+    # model set in a different order (per_model dict-insertion order) is valid and
+    # produces identical results. An order-sensitive ``!=`` spuriously rejected it.
+    model_set = set(models)
     for o in covered:
-        if o.models != models:
+        if set(o.models) != model_set:
             raise ValueError(f"benchmark {o.benchmark!r} has models {o.models}, expected {models}")
 
     n = len(covered)

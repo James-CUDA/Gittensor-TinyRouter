@@ -376,7 +376,13 @@ def extract_boxed(text: str) -> str | None:
         if end == -1:
             # Unbalanced; stop scanning further occurrences.
             break
-        results.append(text[start:end].strip())
+        content = text[start:end].strip()
+        # Skip an empty ``\boxed{}``: it carries no answer, so it must not be
+        # returned as ``""`` (which reads as a present answer to ``has_answer`` and
+        # shadows a real earlier box in ``_committed_answer``). Fall through to the
+        # last box that actually has content, else ``None``.
+        if content:
+            results.append(content)
         idx = end + 1
     return results[-1] if results else None
 
@@ -413,6 +419,38 @@ def extract_last_number(text: str) -> str | None:
     if not matches:
         return None
     return matches[-1].replace(",", "").replace(" ", "")
+
+
+def _is_thousands_grouped_number(s: str) -> bool:
+    """True when ``s`` is a single numeric literal with US thousands commas."""
+    compact = re.sub(r"\s+", "", s)
+    return bool(re.fullmatch(r"-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?", compact))
+
+
+def _looks_structured_answer(s: str) -> bool:
+    """True when commas likely separate elements, not thousands grouping.
+
+    The thousands-comma stripper must not run on set/tuple/list answers such as
+    ``{2, 100}`` or ``(5, 120)`` — otherwise element separators are merged into a
+    scalar false positive (issue #296).
+    """
+    compact = re.sub(r"\s+", "", s)
+    if _is_thousands_grouped_number(compact):
+        return False
+    # LaTeX thin-space thousands: ``1{,}000`` / ``1{,}234{,}567`` (not set braces).
+    if re.fullmatch(r"-?\d+(?:\{,\}\d{3})+", compact):
+        return False
+    if re.search(r"\\[\{\}]", s):
+        return True
+    if ("{" in s or "}" in s) and "{,}" not in s:
+        return True
+    if "(" in s and ")" in s and "," in s:
+        return True
+    if "[" in s and "]" in s and "," in s:
+        return True
+    if s.count(",") > 1:
+        return True
+    return False
 
 
 _FONT_COMMANDS = ("text", "mathrm", "mathbf", "mathit", "mathsf", "mathtt", "boldsymbol")
@@ -488,6 +526,10 @@ def normalize_math_answer(ans: str | None) -> str:
     if ans is None:
         return ""
     s = str(ans).strip()
+    # Detect set/tuple/list shape before delimiters are stripped — otherwise
+    # ``(5, 120)`` loses its parens and ``{2, 100}`` loses its braces before the
+    # thousands-comma guard can see them (issue #296).
+    structured_answer = _looks_structured_answer(s)
     # Drop a leading "answer:" style prefix.
     s = re.sub(r"^(the\s+)?(final\s+)?answer(\s+is)?\s*[:=]?\s*", "", s, flags=re.I)
     # Remove math-mode delimiters. Strip the escaped dollar ``\$`` BEFORE the bare
@@ -507,6 +549,7 @@ def normalize_math_answer(ans: str | None) -> str:
     # ``\circ`` (function composition) is untouched.
     s = re.sub(r"\^\{?\\circ\}?", "", s)
     s = s.replace(r"\degree", "")
+    s = s.replace("°", "")
     s = s.replace(r"\$", "")
     s = s.strip()
     if s.startswith("="):
@@ -552,11 +595,11 @@ def normalize_math_answer(ans: str | None) -> str:
     # (a boxed answer like \boxed{2{,}048} otherwise never matches "2048").
     s = s.replace("{,}", ",")
     # Strip digit-grouping commas ("2,000" -> "2000", "1,000,000" -> "1000000") so
-    # a thousands-separated answer is not a false negative. Only a comma between a
-    # digit and a group of exactly three digits at a non-digit boundary is removed,
-    # leaving list-like "1,2,3" untouched. Matches extract_last_number, which
-    # already drops these commas.
-    s = re.sub(r"(?<=\d),(?=\d{3}(?:\D|$))", "", s)
+    # a thousands-separated answer is not a false negative. Skip when the answer
+    # looks like a set/tuple/list — otherwise ``{2, 100}`` merges to ``2100`` (issue
+    # #296). Matches extract_last_number, which already drops these commas.
+    if not structured_answer:
+        s = re.sub(r"(?<=\d),(?=\d{3}(?:\D|$))", "", s)
     s = s.lower()
     # Canonicalize a pure integer ratio a/b. A leading sign may sit OUTSIDE the
     # parentheses: a negated LaTeX fraction (\-frac{3}{4}) normalizes to

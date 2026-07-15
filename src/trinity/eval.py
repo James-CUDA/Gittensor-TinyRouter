@@ -37,6 +37,29 @@ _REPO = Path(__file__).resolve().parents[2]
 REPRODUCIBILITY_SEED: int = 42
 
 
+def _load_eval_tasks(adapter, benchmark: str, *, max_items: int, seed: int):
+    """Load the test split, refusing the offline toy set.
+
+    ``build_benchmark`` and ``trinity.train`` already hard-fail when loaders
+    substitute their 2-item toy set. Eval must not silently report R1/R2/R4 on
+    toy data — the JOURNAL follow-up from the hidden-benchmark guard (2026-07-10).
+    """
+    import warnings
+
+    from .adapters.split_policy import ToyFallbackWarning
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ToyFallbackWarning)
+        try:
+            return adapter.load_tasks("test", max_items=max_items, seed=seed)
+        except ToyFallbackWarning as exc:
+            raise RuntimeError(
+                f"Refusing to evaluate on the offline toy set for {benchmark!r}: {exc} "
+                f"Install `datasets`, check network access, and verify the benchmark's "
+                f"test split exists upstream."
+            ) from exc
+
+
 class RandomPolicy:
     """Random (agent, role) each turn — the R4 routing baseline (no GPU).
 
@@ -257,7 +280,7 @@ async def evaluate(args) -> dict:
     # Resolve the benchmark to an adapter ONCE; the rest of the evaluator drives
     # the adapter interface and never branches on the benchmark name (#9).
     adapter = get_adapter(args.benchmark)
-    tasks = adapter.load_tasks("test", max_items=args.max_items, seed=args.seed)
+    tasks = _load_eval_tasks(adapter, args.benchmark, max_items=args.max_items, seed=args.seed)
     print(f"[eval] benchmark={args.benchmark}  {len(tasks)} test tasks  pool={pool_models}")
 
     # Read the SAME `session:` block train.py uses so eval runs the trained
