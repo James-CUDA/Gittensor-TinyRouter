@@ -99,7 +99,8 @@ def _final_answer_segment(text: str) -> str:
     """
     if not text:
         return ""
-    m = _ANSWER_LEAD.search(text)
+    matches = list(_ANSWER_LEAD.finditer(text))
+    m = matches[-1] if matches else None
     seg = m.group(1) if m else next((ln for ln in reversed(text.splitlines()) if ln.strip()), "")
     return seg.strip().splitlines()[0].strip() if seg.strip() else ""
 
