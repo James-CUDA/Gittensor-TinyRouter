@@ -174,7 +174,13 @@ def analyze(
         aurc = float((1.0 - sel_acc).mean())
         random_aurc = 1.0 - base_acc
         acc_at = {c: _accuracy_at(sel_acc, c) for c in covs}
-        partial = min((c for c in covs if c < 1.0), default=1.0)
+        # abstention_gain is the MILDEST abstention the field documents
+        # (acc@0.8 - acc@1.0): the accuracy lift from dropping only the least-
+        # confident queries. That is the HIGHEST partial coverage below full, so
+        # take max(), not min() -- min() reports the DEEPEST level (acc@0.5), a
+        # far more aggressive abstention than the field claims. Degenerates
+        # correctly for a single partial level and for coverages=(1.0,) (gain 0).
+        partial = max((c for c in covs if c < 1.0), default=1.0)
         abstention_gain = acc_at.get(partial, base_acc) - acc_at.get(1.0, base_acc)
         per_model.append(ModelSelective(
             model=models[i], base_accuracy=base_acc, aurc=aurc, random_aurc=random_aurc,
