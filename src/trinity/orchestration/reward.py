@@ -554,6 +554,12 @@ def normalize_math_answer(ans: str | None) -> str:
     s = s.strip()
     if s.startswith("="):
         s = s[1:].strip()
+    # A "solve for x" answer often carries the variable it solved for
+    # ("x=5", "x = 5"), while the reference is the bare value ("5"). Strip a single
+    # leading single-letter assignment so the two match. Only ONE leading letter
+    # directly followed by "=" is removed, so a multi-char token ("log=2") and any
+    # equation whose left side is meaningful are left untouched.
+    s = re.sub(r"^[a-zA-Z]\s*=\s*", "", s).strip()
     # Strip a single outer pair of \{ \} or { }. The capture is LAZY so the
     # trailing optional backslash can consume a "\}" escape; a greedy ".*" eats it
     # first, leaving a stray backslash ("\{1,2\}" -> "1,2\") that fails to match a
