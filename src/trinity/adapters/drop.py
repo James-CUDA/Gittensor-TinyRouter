@@ -104,16 +104,24 @@ def _final_answer_segment(text: str) -> str:
     return seg.strip().splitlines()[0].strip() if seg.strip() else ""
 
 
+#: Surrounding punctuation stripped from a token, EXCLUDING the signs ``+``/``-`` — a
+#: leading sign is part of a number's value, not wrapping noise.
+_STRIP_EDGE = "".join(c for c in string.punctuation if c not in "+-")
+
+
 def _normalize_token(raw: str) -> str:
     """Normalise one token: number-normalize if numeric, else strip its punctuation.
 
     Punctuation is stripped *per token* and skipped for numbers, so ``"16.0"`` and
-    ``"$16"`` stay a single number (``"16.0"``) instead of being split on the ``.``
-    or losing the sign — matching DROP's ``_normalize`` (which does not strip
-    punctuation from numeric tokens)."""
-    core = raw.strip(string.punctuation)
+    ``"$16"`` stay a single number. Two formats of the same number normalize equal to its
+    value: a **thousands separator** is removed (``"1,000" == "1000"``, and ``"1,234.5"``
+    is no longer corrupted to ``"12345"``) and a **leading sign is preserved** (``"-5"``
+    stays negative, so it does not falsely match ``"5"``) — matching DROP's ``_normalize``,
+    as this docstring already promised but the old ``strip(string.punctuation)`` (which
+    dropped the ``-`` and left commas to break ``float()``) did not deliver."""
+    core = raw.strip(_STRIP_EDGE)
     try:
-        return str(float(core))
+        return str(float(core.replace(",", "")))
     except ValueError:
         return _PUNCT.sub("", raw)
 
