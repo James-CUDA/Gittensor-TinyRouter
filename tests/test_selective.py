@@ -127,3 +127,52 @@ def test_render_report():
     assert "selective prediction" in md.lower() and "AURC" in md
     assert "acc@0.5" in md and "risk-coverage" in md.lower()
     assert render(analyze({"benchmark": "x", "tasks": []})).strip().endswith("(no matrix data)_")
+
+
+# --------------------------------------------------------------------------- #
+# abstention_gain is measured at the MILDEST abstention (acc@0.8), as documented
+# --------------------------------------------------------------------------- #
+def _confident_matrix():
+    # 10 questions; a spread of confidences so acc@0.8 and acc@0.5 differ.
+    rows = []
+    for i in range(10):
+        # first 5: unanimous-correct (high confidence, correct)
+        # next 3: unanimous-wrong (high confidence, wrong)
+        # last 2: split (low confidence, wrong)
+        if i < 5:
+            rows.append({"m": [1, 1, 1]})
+        elif i < 8:
+            rows.append({"m": [0, 0, 0]})
+        else:
+            rows.append({"m": [1, 0, 0]})
+    return _matrix(rows)
+
+
+def test_abstention_gain_uses_the_highest_partial_coverage():
+    s = analyze(_confident_matrix(), coverages=(1.0, 0.8, 0.5))
+    p = s.per_model[0]
+    expected = p.accuracy_at_coverage[0.8] - p.accuracy_at_coverage[1.0]
+    assert p.abstention_gain == pytest.approx(expected)
+
+
+def test_abstention_gain_is_not_measured_at_the_deepest_coverage():
+    # Regression: the deepest level (0.5) must NOT define the documented acc@0.8 gain
+    # whenever the two accuracies actually differ.
+    s = analyze(_confident_matrix(), coverages=(1.0, 0.8, 0.5))
+    p = s.per_model[0]
+    deep = p.accuracy_at_coverage[0.5] - p.accuracy_at_coverage[1.0]
+    if not deep == pytest.approx(p.accuracy_at_coverage[0.8] - p.accuracy_at_coverage[1.0]):
+        assert p.abstention_gain != pytest.approx(deep)
+
+
+def test_abstention_gain_with_a_single_partial_coverage():
+    s = analyze(_confident_matrix(), coverages=(1.0, 0.8))
+    p = s.per_model[0]
+    assert p.abstention_gain == pytest.approx(
+        p.accuracy_at_coverage[0.8] - p.accuracy_at_coverage[1.0]
+    )
+
+
+def test_abstention_gain_is_zero_without_any_partial_coverage():
+    s = analyze(_confident_matrix(), coverages=(1.0,))
+    assert s.per_model[0].abstention_gain == pytest.approx(0.0)

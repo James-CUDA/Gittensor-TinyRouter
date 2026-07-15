@@ -174,7 +174,12 @@ def analyze(
         aurc = float((1.0 - sel_acc).mean())
         random_aurc = 1.0 - base_acc
         acc_at = {c: _accuracy_at(sel_acc, c) for c in covs}
-        partial = min((c for c in covs if c < 1.0), default=1.0)
+        # The gain is measured at the MILDEST abstention — the highest coverage below
+        # full (0.8 of DEFAULT_COVERAGES), per ``ModelSelective.abstention_gain``'s
+        # documented "acc@0.8 - acc@1.0". ``min`` picked the *deepest* level (0.5),
+        # reporting a different metric than the field claims. With no partial
+        # coverage configured this degenerates to 1.0 and the gain is 0, as before.
+        partial = max((c for c in covs if c < 1.0), default=1.0)
         abstention_gain = acc_at.get(partial, base_acc) - acc_at.get(1.0, base_acc)
         per_model.append(ModelSelective(
             model=models[i], base_accuracy=base_acc, aurc=aurc, random_aurc=random_aurc,
