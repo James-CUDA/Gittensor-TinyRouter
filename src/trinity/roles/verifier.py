@@ -44,7 +44,7 @@ __all__ = ["VERDICT_RE", "parse_verdict", "extract_diagnosis"]
 # reject the common italic wrapper ``VERDICT: __REVISE__``. The negative lookahead
 # blocks only a trailing *letter*, so closing markdown (``**``/``__``/`` ` ``) and
 # punctuation are still fine.
-VERDICT_RE = re.compile(r"VERDICT\b[\s:*_`~-]*(ACCEPT|REVISE)(?![A-Za-z])", re.IGNORECASE)
+VERDICT_RE = re.compile(r"VERDICT(?![A-Za-z])[\s:*_`~-]*(ACCEPT|REVISE)(?![A-Za-z])", re.IGNORECASE)
 
 
 def parse_verdict(text: str) -> str | None:
