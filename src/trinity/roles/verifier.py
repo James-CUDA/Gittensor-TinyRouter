@@ -44,7 +44,18 @@ __all__ = ["VERDICT_RE", "parse_verdict", "extract_diagnosis"]
 # reject the common italic wrapper ``VERDICT: __REVISE__``. The negative lookahead
 # blocks only a trailing *letter*, so closing markdown (``**``/``__``/`` ` ``) and
 # punctuation are still fine.
-VERDICT_RE = re.compile(r"VERDICT\b[\s:*_`~-]*(ACCEPT|REVISE)(?![A-Za-z])", re.IGNORECASE)
+#
+# The SAME underscore-is-a-word-character trap applies to the ``VERDICT`` keyword
+# itself: a plain ``VERDICT\b`` fails to match ``__VERDICT__ ACCEPT`` / ``_VERDICT_
+# REVISE`` because the ``T`` sits directly against a word-character ``_`` (no
+# boundary), even though the separator class below explicitly tolerates ``_``. That
+# silently dropped the common underscore-bold/italic wrapper on the keyword and
+# fail-safed the turn to REVISE. Mirror the verdict-word anchor with
+# ``(?![A-Za-z])`` so ``VERDICTS ACCEPT`` is still rejected (an ``S`` follows) while
+# underscore/asterisk/backtick emphasis around ``VERDICT`` parses.
+VERDICT_RE = re.compile(
+    r"VERDICT(?![A-Za-z])[\s:*_`~-]*(ACCEPT|REVISE)(?![A-Za-z])", re.IGNORECASE
+)
 
 
 def parse_verdict(text: str) -> str | None:

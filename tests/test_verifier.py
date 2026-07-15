@@ -72,10 +72,29 @@ def test_markdown_formatted_verdicts_parse():
     assert parse_verdict("VERDICT - ACCEPT") == "ACCEPT"
 
 
+def test_underscore_emphasis_on_the_keyword_parses():
+    # Markdown renders __x__/_x_ (underscore bold/italic) identically to **x**/*x*.
+    # A leading ``VERDICT\b`` matched the asterisk/backtick wrappers but NOT the
+    # underscore ones: ``_`` is a word character, so there is no boundary between
+    # the ``T`` and a directly-following ``_`` and the whole match was abandoned,
+    # fail-safing a correct+complete answer to REVISE.
+    assert parse_verdict("__VERDICT__ ACCEPT") == "ACCEPT"
+    assert parse_verdict("_VERDICT_ REVISE") == "REVISE"
+    assert parse_verdict("__VERDICT__: ACCEPT") == "ACCEPT"
+    assert parse_verdict("The proof holds.\n_VERDICT_: ACCEPT") == "ACCEPT"
+
+
 def test_markdown_does_not_defeat_the_prefix_word_guard():
     # The word-boundary guard must survive the broadened separators.
     assert parse_verdict("VERDICT: **ACCEPTABLE** only if fixed") is None
     assert parse_verdict("VERDICT: `REVISED` the plan") is None
+
+
+def test_underscore_keyword_guard_still_rejects_a_longer_word():
+    # Broadening the keyword anchor must not let ``VERDICTS`` (a plural / longer
+    # word) count as the committed keyword — an ``S`` follows, so it is rejected.
+    assert parse_verdict("VERDICTS were mixed, some ACCEPT") is None
+    assert parse_verdict("__VERDICTS__ ACCEPT") is None
 
 
 def test_markdown_last_verdict_still_wins():
