@@ -689,11 +689,18 @@ def _sympy_equal(a: str, b: str) -> bool:
             parse_expr,
             standard_transformations,
             implicit_multiplication_application,
+            convert_xor,
         )
     except Exception:
         return False
+    # ``convert_xor`` makes ``^`` mean exponentiation, not Python's bitwise XOR.
+    # In math answers ``^`` universally reads "to the power of", so without this
+    # sympy evaluates ``2^6`` as ``2 XOR 6 == 4`` (not 64): a WRONG answer of "4"
+    # grades equal to ``\boxed{2^6}`` (false positive) while a correct ``\boxed{2^3}``
+    # never matches ``8`` (false negative). See issue #342.
     transformations = standard_transformations + (
         implicit_multiplication_application,
+        convert_xor,
     )
     try:
         ea = parse_expr(a, transformations=transformations, evaluate=True)
