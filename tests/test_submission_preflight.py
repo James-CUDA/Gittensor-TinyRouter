@@ -43,7 +43,7 @@ def _honest_receipt(cost: float = 21.5, *, benchmark: str = "math500") -> dict:
     ]
     return {
         "benchmark": benchmark,
-        "pool_models": ["qwen3.5-35b-a3b", "minimax-m3", "deepseek-v4-flash"],
+        "pool_models": ["qwen3.5-35b-a3b", "gemini-3.1-flash-lite", "deepseek-v4-flash"],
         "n_total": EXPECTED_TOTAL_PARAMS,
         "total_cost_usd": cost,
         "generations": len(gens),
@@ -157,7 +157,7 @@ def test_ledger_cost_gate_passes_when_totals_match(tmp_path: Path):
 
 def test_ledger_cost_gate_fails_on_mismatch(tmp_path: Path):
     ledger = tmp_path / "ledger.jsonl"
-    CL.append_ledger_entry(ledger, "minimax-m3", 1_000_000, 1_000_000)
+    CL.append_ledger_entry(ledger, "gemini-3.1-flash-lite", 1_000_000, 1_000_000)
     receipt = _honest_receipt(cost=1.0)
     reason = validate_ledger_receipt_cost(receipt, str(ledger))
     assert reason is not None

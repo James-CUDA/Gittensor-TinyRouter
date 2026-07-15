@@ -45,15 +45,15 @@ def test_ledger_payload_strips_provider_prefix_from_model_slug():
 
 def test_ledger_entry_hash_matches_manual_sha256():
     prev = ""
-    payload = CL.ledger_payload("minimax-m3", 10, 20)
+    payload = CL.ledger_payload("gemini-3.1-flash-lite", 10, 20)
     expected = hashlib.sha256((prev + payload).encode()).hexdigest()
-    assert CL.ledger_entry_hash(prev, "minimax-m3", 10, 20) == expected
+    assert CL.ledger_entry_hash(prev, "gemini-3.1-flash-lite", 10, 20) == expected
 
 
 def test_ledger_entry_hash_links_to_previous_digest():
     first = CL.ledger_entry_hash("", "qwen3.5-35b-a3b", 5, 5)
-    second = CL.ledger_entry_hash(first, "minimax-m3", 1, 1)
-    payload = CL.ledger_payload("minimax-m3", 1, 1)
+    second = CL.ledger_entry_hash(first, "gemini-3.1-flash-lite", 1, 1)
+    payload = CL.ledger_payload("gemini-3.1-flash-lite", 1, 1)
     assert second == hashlib.sha256((first + payload).encode()).hexdigest()
 
 
@@ -96,7 +96,7 @@ def test_verify_ledger_chain_accepts_valid_multi_entry_chain(tmp_path):
         tmp_path,
         [
             ("qwen3.5-35b-a3b", 10, 5),
-            ("minimax-m3", 20, 15),
+            ("gemini-3.1-flash-lite", 20, 15),
             ("deepseek-v4-flash", 1, 1),
         ],
     )
@@ -145,7 +145,7 @@ def test_verify_ledger_chain_rejects_invalid_json(tmp_path):
 def test_verify_ledger_chain_rejects_broken_link_in_multi_entry_chain(tmp_path):
     path = _write_chain(
         tmp_path,
-        [("qwen3.5-35b-a3b", 1, 1), ("minimax-m3", 2, 2)],
+        [("qwen3.5-35b-a3b", 1, 1), ("gemini-3.1-flash-lite", 2, 2)],
     )
     lines = path.read_text(encoding="utf-8").splitlines()
     second = json.loads(lines[1])
@@ -165,7 +165,7 @@ def test_verify_ledger_chain_rejects_broken_link_in_multi_entry_chain(tmp_path):
 def test_append_ledger_entry_builds_chain_on_disk(tmp_path):
     path = tmp_path / "ledger.jsonl"
     h1 = CL.append_ledger_entry(path, "qwen3.5-35b-a3b", 10, 5)
-    h2 = CL.append_ledger_entry(path, "minimax-m3", 3, 7)
+    h2 = CL.append_ledger_entry(path, "gemini-3.1-flash-lite", 3, 7)
     assert h1 != h2
     valid, count, err = CL.verify_ledger_chain(path)
     assert valid is True
@@ -184,7 +184,7 @@ def test_append_continues_from_last_line_after_broken_prefix(tmp_path):
     first = CL.format_ledger_line("qwen3.5-35b-a3b", 1, 1, prev_hash="")
     first_h = json.loads(first)["h"]
     # Deliberately broken second line (wrong hash) — chain no longer verifies.
-    broken = '{"m":"minimax-m3","p":2,"c":2,"h":"' + ("0" * 64) + '"}'
+    broken = '{"m":"gemini-3.1-flash-lite","p":2,"c":2,"h":"' + ("0" * 64) + '"}'
     path.write_text(first + "\n" + broken + "\n", encoding="utf-8")
     assert CL.verify_ledger_chain(path)[0] is False
 
@@ -205,8 +205,8 @@ def test_append_continues_from_last_line_after_broken_prefix(tmp_path):
 def test_append_via_file_handle_builds_verifiable_chain():
     buf = StringIO()
     h1 = CL.append_ledger_entry("unused.jsonl", "qwen3.5-35b-a3b", 10, 5, file_handle=buf)
-    h2 = CL.append_ledger_entry("unused.jsonl", "minimax-m3", 3, 7, file_handle=buf)
-    assert h2 == CL.ledger_entry_hash(h1, "minimax-m3", 3, 7)
+    h2 = CL.append_ledger_entry("unused.jsonl", "gemini-3.1-flash-lite", 3, 7, file_handle=buf)
+    assert h2 == CL.ledger_entry_hash(h1, "gemini-3.1-flash-lite", 3, 7)
     valid, count, err = CL.verify_ledger_chain_text(buf.getvalue())
     assert valid is True
     assert count == 2
@@ -221,10 +221,10 @@ def test_tip_hash_from_text_returns_empty_for_blank():
 def test_read_ledger_entries_preserves_order(tmp_path):
     path = _write_chain(
         tmp_path,
-        [("qwen3.5-35b-a3b", 1, 2), ("minimax-m3", 3, 4)],
+        [("qwen3.5-35b-a3b", 1, 2), ("gemini-3.1-flash-lite", 3, 4)],
     )
     entries = CL.read_ledger_entries(path)
-    assert [e.model for e in entries] == ["qwen3.5-35b-a3b", "minimax-m3"]
+    assert [e.model for e in entries] == ["qwen3.5-35b-a3b", "gemini-3.1-flash-lite"]
     assert entries[1].total_tokens == 7
 
 
@@ -232,11 +232,11 @@ def test_summarize_token_usage_aggregates_per_model():
     entries = [
         CL.LedgerEntry("qwen3.5-35b-a3b", 10, 5),
         CL.LedgerEntry("qwen3.5-35b-a3b", 20, 15),
-        CL.LedgerEntry("minimax-m3", 1, 1),
+        CL.LedgerEntry("gemini-3.1-flash-lite", 1, 1),
     ]
     summary = CL.summarize_token_usage(entries)
     assert summary["qwen3.5-35b-a3b"] == (30, 20, 2)
-    assert summary["minimax-m3"] == (1, 1, 1)
+    assert summary["gemini-3.1-flash-lite"] == (1, 1, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +248,7 @@ def test_openrouter_ledger_append_writes_verifiable_chain(tmp_path, monkeypatch)
     path = tmp_path / "ledger.jsonl"
     monkeypatch.setenv("TRINITY_COST_LEDGER", str(path))
     _ledger_append("qwen/qwen3.5-35b-a3b", 100, 25)
-    _ledger_append("minimax/minimax-m3", 50, 50)
+    _ledger_append("minimax/gemini-3.1-flash-lite", 50, 50)
     valid, count, err = CL.verify_ledger_chain(path)
     assert valid is True
     assert count == 2

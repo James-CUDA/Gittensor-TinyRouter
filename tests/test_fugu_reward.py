@@ -13,7 +13,7 @@ def _run(final, *, parsed=True, steps=None):
 
 
 def _step(out):
-    return StepResult(step=0, model_id=0, model_name="minimax-m3", subtask="", output=out)
+    return StepResult(step=0, model_id=0, model_name="gemini-3.1-flash-lite", subtask="", output=out)
 
 
 MATH = Task(task_id="m", benchmark="math500", prompt="2+2", answer="4")

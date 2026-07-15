@@ -35,7 +35,7 @@ def _valid_receipt(*, benchmark: str = "math500") -> dict:
     ]
     return {
         "benchmark": benchmark,
-        "pool_models": ["qwen3.5-35b-a3b", "minimax-m3", "deepseek-v4-flash"],
+        "pool_models": ["qwen3.5-35b-a3b", "gemini-3.1-flash-lite", "deepseek-v4-flash"],
         "n_total": EXPECTED_TOTAL_PARAMS,
         "total_cost_usd": 21.5,
         "generations": len(gens),

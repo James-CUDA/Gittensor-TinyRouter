@@ -10,14 +10,14 @@ from trinity.fugu.cost import (
 )
 from trinity.fugu.workflow import CONDUCTOR_KEY, WorkflowRun
 
-POOL = ["qwen3.5-35b-a3b", "minimax-m3", "deepseek-v4-flash"]
+POOL = ["qwen3.5-35b-a3b", "gemini-3.1-flash-lite", "deepseek-v4-flash"]
 
 
 def test_run_cost_prices_exactly():
-    # MiniMax M3 is $0.30/1M in, $1.20/1M out. 1M each -> $1.50.
-    total, bd = run_cost({"minimax-m3": (1_000_000, 1_000_000)})
-    assert abs(total - 1.50) < 1e-9
-    assert abs(bd["minimax-m3"] - 1.50) < 1e-9
+    # Gemini 3.1 Flash Lite is $0.25/1M in, $1.50/1M out. 1M each -> $1.75.
+    total, bd = run_cost({"gemini-3.1-flash-lite": (1_000_000, 1_000_000)})
+    assert abs(total - 1.75) < 1e-9
+    assert abs(bd["gemini-3.1-flash-lite"] - 1.75) < 1e-9
 
 
 def test_conductor_is_free_when_local():
@@ -35,7 +35,7 @@ def test_cost_meter_accumulates_and_caps():
     run = WorkflowRun(
         workflow=None, parsed_ok=True, final_answer="x",
         n_llm_calls=2, prompt_tokens=1000, completion_tokens=1000,
-        model_tokens={"minimax-m3": (1000, 1000)},
+        model_tokens={"gemini-3.1-flash-lite": (1000, 1000)},
     )
     c = meter.add_run(run)
     assert c > 0 and meter.runs == 1 and meter.calls == 2
@@ -44,7 +44,7 @@ def test_cost_meter_accumulates_and_caps():
     meter.add_run(run)
     assert meter.aborted is True
     rep = meter.report()
-    assert rep["per_model"]["minimax-m3"]["usd"] > 0
+    assert rep["per_model"]["gemini-3.1-flash-lite"]["usd"] > 0
 
 
 def test_estimate_grpo_cost_projects_spend():

@@ -24,10 +24,10 @@ from trinity.fugu.cost import (
 )
 
 _WORKERS = ["qwen3.5-35b-a3b", "deepseek-v4-flash"]
-_HOSTED = "minimax-m3"  # (0.30, 1.20) $/1M tokens
+_HOSTED = "gemini-3.1-flash-lite"  # (0.25, 1.50) $/1M tokens
 
 # One rollout, 1M prompt + 1M completion tokens of Conductor generation.
-# => 0.30 + 1.20 = $1.50 of Conductor spend, exactly.
+# => 0.25 + 1.50 = $1.75 of Conductor spend, exactly.
 _ONE_ROLLOUT = dict(
     worker_names=_WORKERS,
     group_size=1,
@@ -47,7 +47,7 @@ def test_explicit_prices_still_bills_a_hosted_conductor():
         prices=dict(PRICES), conductor_local=False, conductor_model=_HOSTED,
         **_ONE_ROLLOUT,
     )
-    assert est["conductor_api_usd"] == pytest.approx(1.50)
+    assert est["conductor_api_usd"] == pytest.approx(1.75)
 
 
 def test_explicit_prices_matches_the_default_table():
@@ -89,7 +89,7 @@ def test_estimate_eval_cost_inherits_the_fix():
         avg_conductor_prompt_tokens=1_000_000,
         avg_conductor_completion_tokens=1_000_000,
     )
-    assert est["conductor_api_usd"] == pytest.approx(1.50)
+    assert est["conductor_api_usd"] == pytest.approx(1.75)
 
 
 # --------------------------------------------------------------------------- #
@@ -155,7 +155,7 @@ def test_conductor_model_resolves_against_prices_when_absent_from_the_table():
         prices=workers_only, conductor_local=False, conductor_model=_HOSTED,
         **_ONE_ROLLOUT,
     )
-    assert est["conductor_api_usd"] == pytest.approx(1.50)
+    assert est["conductor_api_usd"] == pytest.approx(1.75)
 
 
 # --------------------------------------------------------------------------- #

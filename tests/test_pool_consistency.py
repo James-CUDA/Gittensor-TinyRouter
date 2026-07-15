@@ -21,8 +21,8 @@ from trinity.llm.pool_consistency import (
 
 _REPO = Path(__file__).resolve().parents[1]
 
-_POOL = ["qwen3.5-35b-a3b", "minimax-m3", "deepseek-v4-flash"]
-_PRICES = {"qwen3.5-35b-a3b": (0.14, 1.00), "minimax-m3": (0.30, 1.20),
+_POOL = ["qwen3.5-35b-a3b", "gemini-3.1-flash-lite", "deepseek-v4-flash"]
+_PRICES = {"qwen3.5-35b-a3b": (0.14, 1.00), "gemini-3.1-flash-lite": (0.25, 1.50),
            "deepseek-v4-flash": (0.09, 0.18)}
 
 
@@ -64,7 +64,7 @@ def test_consistent_sources_are_ok():
 # --------------------------------------------------------------------------- #
 def test_default_pool_models_missing_a_model_is_flagged():
     # gate 6 would false-reject an honest submission.
-    report = check_pool_consistency(_sources(dpm=["qwen3.5-35b-a3b", "minimax-m3"]))
+    report = check_pool_consistency(_sources(dpm=["qwen3.5-35b-a3b", "gemini-3.1-flash-lite"]))
     assert not report.ok
     assert any("missing pool model" in p and "gate 6" in p for p in report.problems)
 
@@ -75,15 +75,15 @@ def test_default_pool_models_extra_model_is_flagged():
 
 
 def test_duplicate_pool_name_is_flagged():
-    report = check_pool_consistency(_sources(yaml_pool=[*_POOL, "minimax-m3"]))
-    assert any("duplicate pool name" in p and "minimax-m3" in p for p in report.problems)
+    report = check_pool_consistency(_sources(yaml_pool=[*_POOL, "gemini-3.1-flash-lite"]))
+    assert any("duplicate pool name" in p and "gemini-3.1-flash-lite" in p for p in report.problems)
 
 
 # --------------------------------------------------------------------------- #
 # price-table drift
 # --------------------------------------------------------------------------- #
 def test_price_table_missing_a_model_is_flagged():
-    stale = {"qwen3.5-35b-a3b": (0.14, 1.00), "minimax-m3": (0.30, 1.20)}  # no deepseek
+    stale = {"qwen3.5-35b-a3b": (0.14, 1.00), "gemini-3.1-flash-lite": (0.30, 1.20)}  # no deepseek
     report = check_pool_consistency(_sources(duplicates=[("fugu.cost.PRICES", stale)]))
     assert any("missing price" in p and "deepseek-v4-flash" in p for p in report.problems)
 
@@ -95,9 +95,9 @@ def test_price_table_extra_entry_is_flagged():
 
 
 def test_price_disagreement_is_flagged():
-    drifted = {**_PRICES, "minimax-m3": (0.99, 1.20)}   # canonical says 0.30
+    drifted = {**_PRICES, "gemini-3.1-flash-lite": (0.99, 1.20)}   # canonical says 0.25
     report = check_pool_consistency(_sources(duplicates=[("fugu.cost.PRICES", drifted)]))
-    assert any("price disagreement" in p and "minimax-m3" in p for p in report.problems)
+    assert any("price disagreement" in p and "gemini-3.1-flash-lite" in p for p in report.problems)
 
 
 @pytest.mark.parametrize("bad", [(0.0, 1.0), (-0.1, 1.0), (0.14, float("nan")),
