@@ -133,7 +133,7 @@ def build_bbh_prompt(question: str, answer_type: str) -> str:
 # --------------------------------------------------------------------------- #
 # Scoring (pure text; no execution)
 # --------------------------------------------------------------------------- #
-_ANSWER_LEAD = re.compile(r"(?:final\s+)?answer\s*(?:is|:)\s*(.+)", re.IGNORECASE | re.DOTALL)
+_ANSWER_LEAD = re.compile(r"(?:final\s+)?answer\s*(?:is|:)\s*(.+)", re.IGNORECASE)
 
 
 def _final_answer_segment(text: str) -> str:
@@ -144,8 +144,8 @@ def _final_answer_segment(text: str) -> str:
     """
     if not text:
         return ""
-    m = _ANSWER_LEAD.search(text)
-    seg = m.group(1) if m else next((ln for ln in reversed(text.splitlines()) if ln.strip()), "")
+    matches = _ANSWER_LEAD.findall(text)
+    seg = matches[-1] if matches else next((ln for ln in reversed(text.splitlines()) if ln.strip()), "")
     # Keep only the first line of the captured segment (the answer proper).
     return seg.strip().splitlines()[0].strip() if seg.strip() else ""
 
