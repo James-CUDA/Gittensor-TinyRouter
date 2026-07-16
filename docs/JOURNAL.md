@@ -18,6 +18,29 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-07-15 — normalize_decision leaked a raw Role enum, silently inflating novelty to 1.0 on identical routing  #mistake #finding
+**Context:** `src/trinity/novelty.py` is the contributor-facing offline scorer for the novelty term
+(5% of score): it turns two aligned `(agent, role)` decision sequences into a novelty number and is
+documented to reduce an enum role to its `name` so a live head compares equal to a JSON-persisted
+reference "regardless of object identity".
+**Expected:** `normalize_decision((0, Role.WORKER)) == (0, "WORKER")`, and a live-enum head that
+routes identically to a name-persisted reference scores `agreement=1.0`, `novelty=0.0`.
+**Actual:** `normalize_decision((0, Role.WORKER))` returned `(0, <Role.WORKER: 'worker'>)`; a head
+with identical routing scored `agreement=0.0`, `novelty=1.0`, `n_agree=0`.
+**Root cause:** `_norm_one`'s fast-path `if isinstance(x, (str, int, bool)) or x is None: return x`
+ran *before* the enum name-reduction loop. `trinity.types.Role` is `class Role(str, Enum)`, so a
+real `Role` member satisfies `isinstance(x, str)` and the raw enum was returned. Its str value is
+`"worker"`, which never equals the `"WORKER"` name a persisted reference stores. The name-reduction
+branch was dead code for the one enum the module was written for; `tests/test_novelty.py` only
+exercised a hand-rolled `_Role` stand-in (a plain object, NOT a str subclass), so the fast-path was
+never hit under test.
+**Fix / decision:** reduce `isinstance(x, enum.Enum)` to `x.name` *before* the scalar fast-path.
+Added two regression tests using the production `Role` enum (`test_real_role_enum_reduces_to_its_name`,
+`test_live_role_enum_head_agrees_with_json_persisted_name_reference`) that fail before and pass after;
+all existing novelty tests still pass. Distinct from the farmed "novelty king" selection vein
+(issue #180, `scripts/pr_eval.py`) — this is the pure `normalize_decision` helper.
+**Follow-up:** none.
+
 ## 2026-07-13 — verified_ledger_total_usd crashed on a non-UTF-8 ledger instead of returning None  #mistake #finding
 **Context:** auditing the offline cost-accounting path (`llm/openrouter_pricing.py`) that feeds
 `scripts/cost_report.py --ledger` and `pack_submission._estimate_cost()` (the receipt cost a

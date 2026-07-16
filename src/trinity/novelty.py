@@ -27,6 +27,7 @@ Pure / deterministic / no network / no GPU / no torch.
 """
 from __future__ import annotations
 
+import enum
 import math
 from collections import Counter
 from dataclasses import dataclass
@@ -60,6 +61,15 @@ def normalize_decision(decision: Any) -> Decision:
     identity, and the key round-trips through JSON.
     """
     def _norm_one(x: Any) -> Any:
+        # Reduce an Enum member to its ``name`` BEFORE the scalar fast-path.
+        # ``trinity.types.Role`` is ``class Role(str, Enum)``, so a bare
+        # ``isinstance(x, str)`` check short-circuits and returns the raw enum
+        # (``Role.WORKER``) — its str value is ``"worker"``, which never equals
+        # the ``"WORKER"`` name a persisted/JSON reference stores. That silently
+        # scores identical routing as full disagreement (novelty 1.0). Handling
+        # the enum first delivers the documented name-reduction + JSON round-trip.
+        if isinstance(x, enum.Enum):
+            return x.name
         if isinstance(x, (str, int, bool)) or x is None:
             return x
         for attr in ("name", "value"):

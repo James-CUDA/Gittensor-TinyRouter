@@ -32,6 +32,33 @@ def test_enum_like_decisions_compare_by_name():
     assert normalize_decision(a) == normalize_decision(b) == (0, "WORKER")
 
 
+def test_real_role_enum_reduces_to_its_name():
+    # The production ``Role`` is ``class Role(str, Enum)`` -- a str subclass. The
+    # stand-in ``_Role`` above is NOT, so it never exercised the scalar fast-path
+    # that swallowed a real enum. normalize_decision must still reduce it to its
+    # ``name`` so it round-trips through JSON and compares by name, as documented.
+    from trinity.types import Role
+
+    assert normalize_decision((0, Role.WORKER)) == (0, "WORKER")
+    key = normalize_decision((0, Role.WORKER))
+    assert normalize_decision(json.loads(json.dumps(key))) == key
+
+
+def test_live_role_enum_head_agrees_with_json_persisted_name_reference():
+    # Real scenario: a reference head persisted to JSON stores roles as their
+    # ``name`` strings, while the live head yields ``Role`` enums. Identical
+    # routing must score as full agreement / zero novelty -- not disagreement.
+    from trinity.types import Role
+
+    live = [(0, Role.WORKER), (1, Role.THINKER), (2, Role.VERIFIER)]
+    reference = [[0, "WORKER"], [1, "THINKER"], [2, "VERIFIER"]]
+    assert agreement_rate(live, reference) == 1.0
+    report = novelty_report(live, reference)
+    assert report.novelty == 0.0
+    assert report.n_agree == 3
+    assert report.differing_indices == []
+
+
 def test_scalar_and_pair_decisions_both_normalize():
     assert normalize_decision(2) == 2
     assert normalize_decision((1, "THINKER")) == (1, "THINKER")
