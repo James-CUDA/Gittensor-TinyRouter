@@ -153,6 +153,22 @@ def test_issue_bot_empty_section_not_filled_by_next_header():
     assert "expected vs actual behavior" not in result.missing_fields
 
 
+def test_issue_bot_filled_section_body_may_mention_a_header_phrase_in_prose():
+    # A fully filled bug report whose prose naturally contains another section's
+    # header phrase ("...trivial to reproduce") must NOT be truncated at that
+    # word and falsely flagged. Section boundaries are header LINES, not any line
+    # that merely mentions the phrase.
+    body = (
+        "**Describe the bug**\nThe grader raises IndexError on an empty candidate list.\n\n"
+        "**Expected vs actual**\nExpected a numeric score; instead it crashes "
+        "and is trivial to reproduce.\n\n"
+        "**To reproduce**\nRun score_text() with an empty candidate list.\n"
+    )
+    result = issue_bot.analyze_issue("[bug] grader crash", body)
+    assert result.missing_fields == []
+    assert result.comment is None
+
+
 # paths: a .github/ change must be labelled area:infra (dot-dir normalization)
 # --------------------------------------------------------------------------- #
 def test_github_path_normalises_without_dropping_the_dot():

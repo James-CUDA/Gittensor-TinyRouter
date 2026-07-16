@@ -12,10 +12,16 @@ from paths import PROTOCOL_KEYWORDS
 
 __all__ = ["analyze_issue", "main"]
 
+# Anchor each hint to a line-leading markdown header marker (``##``/``**``), the
+# same way the enhancement hints below are anchored. Without the anchor these are
+# bare substrings, so a filled section whose prose merely mentions the phrase
+# (e.g. an "Expected vs actual" body that says "...and is trivial to reproduce")
+# is mistaken by ``_section_body`` for the next header, truncated to empty, and
+# then falsely reported as a missing section.
 _BUG_SECTION_HINTS: tuple[tuple[str, str], ...] = (
-    (r"describe the bug", "bug description"),
-    (r"expected vs actual", "expected vs actual behavior"),
-    (r"to reproduce|steps to reproduce", "reproduction steps"),
+    (r"^\s*(?:#+\s*|\*\*)describe the bug", "bug description"),
+    (r"^\s*(?:#+\s*|\*\*)expected vs actual", "expected vs actual behavior"),
+    (r"^\s*(?:#+\s*|\*\*)(?:to reproduce|steps to reproduce)", "reproduction steps"),
 )
 
 _ENHANCEMENT_SECTION_HINTS: tuple[tuple[str, str], ...] = (

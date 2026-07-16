@@ -39,6 +39,22 @@ Added two regression tests using the production `Role` enum (`test_real_role_enu
 `test_live_role_enum_head_agrees_with_json_persisted_name_reference`) that fail before and pass after;
 all existing novelty tests still pass. Distinct from the farmed "novelty king" selection vein
 (issue #180, `scripts/pr_eval.py`) — this is the pure `normalize_decision` helper.
+
+## 2026-07-15 — issue_bot falsely flagged a filled bug section when its prose mentioned another section's header phrase  #mistake #finding
+**Context:** reviewing the deterministic issue-triage bot (`scripts/repo_governance/issue_bot.py`),
+which reports a `[bug]` issue's missing sections (Describe the bug / Expected vs actual / To
+reproduce) and posts a guidance comment.
+**Expected:** a fully filled bug report is accepted with no missing-field nag.
+**Actual:** a report whose "Expected vs actual" body naturally read "...and is trivial to
+**reproduce**" was flagged as missing "expected vs actual behavior". The body measured as empty.
+**Root cause:** `_BUG_SECTION_HINTS` were bare, unanchored substrings (`describe the bug`,
+`expected vs actual`, `to reproduce|steps to reproduce`). `_section_body` treats any line matching
+one of these as the *next* section header and stops there, so an ordinary content line that merely
+*contains* the phrase truncated the section to empty. The `_ENHANCEMENT_SECTION_HINTS` were already
+anchored to a line-leading header marker (`^\*\*summary\*\*`, `##\s*summary`); the bug hints were
+left inconsistent.
+**Fix / decision:** anchor each bug hint to a line-leading markdown header marker
+(`^\s*(?:#+\s*|\*\*)...`), mirroring the enhancement hints, so only true header lines bound a
 **Follow-up:** none.
 
 ## 2026-07-13 — verified_ledger_total_usd crashed on a non-UTF-8 ledger instead of returning None  #mistake #finding
