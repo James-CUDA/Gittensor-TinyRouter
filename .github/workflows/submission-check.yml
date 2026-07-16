@@ -5,6 +5,10 @@ on:
     paths:
       - "submissions/**"
 
+concurrency:
+  group: submission-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   pull-requests: write
   contents: read

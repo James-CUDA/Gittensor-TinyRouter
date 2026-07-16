@@ -216,8 +216,11 @@ def main() -> None:
         print("   export BENCHMARK_PASSWORD=...")
         sys.exit(1)
 
+    pool_ok = step1_verify_pool()
+    if not pool_ok:
+        print("\n❌ Pool verification failed — cannot continue (API calls would fail).")
+        sys.exit(1)
     data_ok = step2_verify_data()
-    step1_verify_pool()
     step3_build_benchmarks(data_ok)
     step4_collect_oracle()
     step5_report()

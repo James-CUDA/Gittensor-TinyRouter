@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-07-14T00:00:00Z",
+  "updated_at": "2026-07-15T00:00:00Z",
   "competition": {
     "benchmarks": ["math500", "mmlu", "livecodebench"],
     "win_margin": 0.02,
