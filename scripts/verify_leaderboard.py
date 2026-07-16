@@ -15,7 +15,7 @@ path. This is the leaderboard analogue of ``scripts/verify_benchmark.py`` (#174)
 
 Read-only: it detects tampering (an inflated best_score, a score above the oracle
 ceiling, best_* not matching the winning history entry, a truncated attempts ledger that
-would defeat the weekly rate limit) — it never writes. Reuses the gate's own parsers so
+would defeat the daily rate limit) — it never writes. Reuses the gate's own parsers so
 it cannot drift from ``check_rate_limit``. Pure/offline (no torch, no network).
 """
 from __future__ import annotations

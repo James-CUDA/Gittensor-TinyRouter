@@ -92,7 +92,7 @@ Gittensor-TinyRouter/
 │   │
 │   ├── submission/                 COMPETITION INFRASTRUCTURE
 │   │   ├── constants.py            Frozen constants (params, pool, margin)
-│   │   ├── gates.py                The 7 pre-eval anti-cheat gates
+│   │   ├── gates.py                The 4 pre-eval anti-cheat gates
 │   │   ├── schema.py               Receipt + theta validation
 │   │   ├── leaderboard.py          Leaderboard reader/verifier
 │   │   ├── preflight.py            Offline preflight checker
@@ -186,7 +186,7 @@ The competition is what makes TinyRouter unique. It is NOT just a benchmark
 
 **Key components:**
 - **Encrypted hidden benchmarks** (AES-256-GCM, sealed seed, never revealed)
-- **8 anti-cheat gates** (rate limit, duplicate, receipt, overfit, etc.)
+- **5 anti-cheat gates (4 pre-eval + 1 post-eval)** (rate limit, duplicate, receipt, overfit, etc.)
 - **Composite scoring with 0.02 win margin** (prevents noise-driven flips)
 - **King-of-the-hill leaderboard** (one composite king across 3 benchmarks)
 - **Per-benchmark audit split** (overfit detection)

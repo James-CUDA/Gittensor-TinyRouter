@@ -510,7 +510,7 @@ def analyze_matrix(
 
     # Pool-complementarity audit: which model is redundant, and which to swap. This
     # is the other half advertised in this tool's title (docs/ORACLE_CEILING_DIAGNOSTIC
-    # .md §6, IMPROVEMENTS.md #1) — it answers the "swap which model?" the POOL_BOUND
+    # .md §6, the improvement plan) — it answers the "swap which model?" the POOL_BOUND
     # verdict raises. Read-only over the same solve tensor; changes no scoring math.
     from trinity.analysis.complementarity import analyze_tensor
 

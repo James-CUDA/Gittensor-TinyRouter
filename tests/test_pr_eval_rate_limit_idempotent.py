@@ -1,6 +1,6 @@
 """Re-evaluating one PR is idempotent for the rate-limit gate.
 
-`_record_attempt` consumes a weekly slot as soon as Gate 1 passes, so a later
+`_record_attempt` consumes a daily slot as soon as Gate 1 passes, so a later
 failure (a CI retry, or a transient GPU/API error during live scoring) leads the
 maintainer to re-run `pr_eval` on the SAME PR. That re-run must not count the
 attempt it already recorded and self-reject the PR as rate-limited. A DISTINCT PR

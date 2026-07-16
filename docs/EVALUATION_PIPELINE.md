@@ -109,8 +109,8 @@ The head is evaluated on **three benchmarks**:
 - **50 hidden audit questions** per benchmark (different from eval, same format).
 - Same cached-lookup scoring as 3a.
 - The **eval−audit gap** detects overfitting:
-  - Gap > 0.10 → **hard reject** (submission rejected).
-  - Gap > 0.05 → **0.85× penalty** on the per-benchmark score.
+  - Gap > 0.15 → **hard reject** (submission rejected).
+  - Gap > 0.08 → **0.85× penalty** on the per-benchmark score.
   - Gap ≤ 0.05 → clean (no penalty).
 
 ### 3c. Live evaluation (15% weight per benchmark)
@@ -150,8 +150,8 @@ Where:
   gated on live accuracy being positive)
 - `novelty` = disagreement with the current king's routing (first benchmark
   only; 0.0 for the other two)
-- `overfit_penalty` = 1.0 (clean), 0.85 (eval−audit gap > 0.05), or reject
-  (gap > 0.10)
+- `overfit_penalty` = 1.0 (clean), 0.85 (eval−audit gap > 0.08), or reject
+  (gap > 0.15)
 
 ### Composite score
 
@@ -243,7 +243,7 @@ All calls use `temperature=0.0` (greedy) for deterministic scoring, with
 | `scripts/pr_eval.py` | Main evaluation orchestrator (all gates + scoring + leaderboard) |
 | `scripts/build_benchmark.py` | One-time hidden benchmark builder (sealed seed, AES encryption) |
 | `scripts/verify_benchmark.py` | Integrity verifier (decrypts + checks hash + counts) |
-| `src/trinity/submission/gates.py` | The 7 pre-eval gates |
+| `src/trinity/submission/gates.py` | The 4 pre-eval gates |
 | `src/trinity/submission/schema.py` | Schema + theta integrity validation |
 | `src/trinity/submission/constants.py` | Frozen constants (params, thresholds, pool, margin) |
 | `src/trinity/orchestration/reward.py` | The shared grader (math/choice/code) |

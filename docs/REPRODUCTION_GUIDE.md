@@ -155,7 +155,7 @@ python scripts/preflight_submission.py \
 ```
 
 If any gate fails, fix the issue before submitting. Common failures:
-- **Receipt cost < $15** → train longer or verify the ledger path.
+- **Receipt cost = cost < $15** → train longer or verify the ledger path.
 - **Flat fitness curve** → the optimizer didn't learn; check the pool and seed.
 - **Duplicate detection** → you accidentally packed a copy of someone's head.
 
@@ -229,7 +229,7 @@ python scripts/pack_submission.py \
 |---|---|
 | `Refusing to train on the offline toy set` | Install `datasets` (`pip install datasets`) and verify network access to HuggingFace |
 | `best_theta not found` | Check the `--run-dir` path; the file is `best_theta.npy` |
-| Receipt cost too low | Set `TRINITY_COST_LEDGER` before training; ensure ≥ $15 spend |
+| Receipt cost too low | Set `TRINITY_COST_LEDGER` before training; ensure ≥ $15 spend spend |
 | All models score the same | The pool may lack complementarity; check with `oracle_ceiling.py` |
 | TRINITY = random routing | The head hasn't learned; try more generations, a different seed, or warm-start |
 | `BENCHMARK_PASSWORD not set` | Only the maintainer needs this (for `pr_eval.py`); miners don't |

@@ -4,7 +4,7 @@
 Pairs each ``trinity.eval`` output (``experiments/**/eval*.json``) with its sealed
 ``scripts/audit_eval.py`` output (``audit_result.json`` in the same run dir) and reports
 the TRINITY eval->audit gap, flagged against the SAME thresholds ``scripts/pr_eval.py``
-GATE 5 uses (penalty > 0.05, hard-reject > 0.10). ``results_table.py`` globs only
+GATE 5 uses (penalty > 0.08, hard-reject > 0.15). ``results_table.py`` globs only
 ``eval*.json``, so this gap was never surfaced during development.
 
     python scripts/generalization_report.py                 # Markdown to stdout

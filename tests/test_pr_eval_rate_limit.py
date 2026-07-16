@@ -8,10 +8,10 @@ Regression targets:
 - Leaderboard timestamps are written in UTC (``time.gmtime`` + trailing ``Z``),
   so they must be read back as UTC. Parsing them with ``time.mktime`` interprets
   the struct as *local* time and skews the epoch by the host's UTC offset,
-  silently shifting the 7-day rate-limit window on any non-UTC maintainer box.
+  silently shifting the 1-day rate-limit window on any non-UTC maintainer box.
 - The gate must count *attempts* (every eval that passed Gate 1), not only
   approved wins in ``history``. Otherwise a miner can lose on score and
-  immediately resubmit without consuming the weekly slot.
+  immediately resubmit without consuming the daily slot.
 """
 import importlib.util
 import json
@@ -90,14 +90,14 @@ def _leaderboard_with(miner: str, ages_days: list[float], *, key: str = "history
 
 
 def test_recent_submission_is_rate_limited():
-    """A submission one day ago blocks a new one (window is 7 days)."""
+    """A submission one day ago blocks a new one (window is 1 day)."""
     lb = _leaderboard_with("alice", [1.0])
     err = pr_eval._check_rate_limit("alice", "math500", lb)
     assert err is not None and "rate_limited" in err
 
 
 def test_old_submission_is_allowed():
-    """A submission 10 days ago is outside the 7-day window."""
+    """A submission 10 days ago is outside the 1-day window."""
     lb = _leaderboard_with("alice", [10.0])
     assert pr_eval._check_rate_limit("alice", "math500", lb) is None
 
@@ -111,7 +111,7 @@ def test_rejected_attempt_still_rate_limits():
     """Gate 1 must count attempts, not only approved wins in history.
 
     Before the fix, only ``history`` (wins) was consulted, so a miner could
-    submit, lose on score, and immediately resubmit — the weekly slot was never
+    submit, lose on score, and immediately resubmit — the daily slot was never
     consumed. ``attempts`` is the authoritative log.
     """
     lb = _leaderboard_with("alice", [1.0], key="attempts")
@@ -184,7 +184,7 @@ def test_boundary_entry_counts_as_utc_regardless_of_host_tz():
     if not hasattr(time, "tzset"):
         pytest.skip("time.tzset unavailable (Windows)")
 
-    lb = _leaderboard_with("alice", [6.0])  # inside the 7-day window
+    lb = _leaderboard_with("alice", [0.5])  # inside the 1-day window
     saved_tz = os.environ.get("TZ")
     try:
         for tz in ("Asia/Tokyo", "America/Los_Angeles", "UTC"):

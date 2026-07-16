@@ -25,7 +25,7 @@ Miners compete to train the best routing head across three benchmarks.
 - Separable CMA-ES trainer with mixed-benchmark minibatches
 - 9 benchmark adapters (math500, mmlu, livecodebench, gpqa, bbh, drop, swebench, mmlu-pro, livecodebench-v6)
 - Encrypted hidden benchmarks (AES-256-GCM, sealed seed)
-- 8 anti-cheat gates
+- 5 anti-cheat gates (4 pre-eval + 1 post-eval)
 - Composite scoring with win margin
 - King-of-the-hill leaderboard
 - Oracle ceiling diagnostic

@@ -310,7 +310,7 @@
         <tbody id="lb-history"></tbody>
       </table>
     </div>
-    <p class="muted-note">Scores from encrypted hidden benchmark · 8 anti-cheat gates run before every evaluation · <a href="leaderboard.json" style="color:#818cf8">Raw JSON</a></p>
+    <p class="muted-note">Scores from encrypted hidden benchmark · 4 pre-eval gates + 1 post-eval run before every evaluation · <a href="leaderboard.json" style="color:#818cf8">Raw JSON</a></p>
   </div>
 </section>
 
@@ -319,31 +319,31 @@
   <div class="container">
     <div class="section-label">The Arena</div>
     <h2 class="section-title">One pool. Three models. Fair fight.</h2>
-    <p class="section-sub">All miners route to the same three Fireworks models. Routing skill is what matters — not who has the biggest GPU.</p>
+    <p class="section-sub">All miners route to the same three OpenRouter models. Routing skill is what matters — not who has the biggest GPU.</p>
     <div class="pool-grid">
       <div class="pool-card">
         <div class="pool-icon">&#x1F9E0;</div>
         <div>
-          <h4>deepseek-v4-pro</h4>
+          <h4>qwen3.5-35b-a3b</h4>
           <p>Knowledge specialist. Dominates MMLU at 92.2%. The go-to model for factual and reasoning tasks.</p>
         </div>
       </div>
       <div class="pool-card">
         <div class="pool-icon">&#x2211;</div>
         <div>
-          <h4>glm-5p2</h4>
+          <h4>gemini-3.1-flash-lite</h4>
           <p>Math specialist. Best math500 at 79.4%. Excels at quantitative problems and symbolic reasoning.</p>
         </div>
       </div>
       <div class="pool-card">
         <div class="pool-icon">&#x1F310;</div>
         <div>
-          <h4>kimi-k2p6</h4>
+          <h4>deepseek-v4-flash</h4>
           <p>General purpose. Broad capability across diverse question types and domains.</p>
         </div>
       </div>
     </div>
-    <p class="muted-note text-center mt-2">All models served via Fireworks AI serverless API. Miners only need a T4 GPU ($0.20/hr) to run the 0.6B encoder. The big models run in the cloud.</p>
+    <p class="muted-note text-center mt-2">All models served via OpenRouter API. Miners only need a T4 GPU ($0.20/hr) to run the 0.6B encoder. The big models run in the cloud.</p>
   </div>
 </section>
 
@@ -361,7 +361,7 @@
       </div>
       <div class="result-card">
         <div class="big">0.835</div>
-        <div class="lbl">Best Single Model (deepseek-v4-pro)</div>
+        <div class="lbl">Best Single Model (qwen3.5-35b-a3b)</div>
       </div>
       <div class="result-card">
         <div class="big">0.833</div>
@@ -378,10 +378,10 @@
         <thead><tr><th>System</th><th>Math</th><th>MMLU</th><th>Average</th></tr></thead>
         <tbody>
           <tr class="highlight"><td><strong>TinyRouter</strong></td><td>0.792</td><td class="winner">0.925</td><td class="winner"><strong>0.858</strong></td></tr>
-          <tr><td>deepseek-v4-pro</td><td>0.747</td><td>0.922</td><td>0.835</td></tr>
+          <tr><td>qwen3.5-35b-a3b</td><td>0.747</td><td>0.922</td><td>0.835</td></tr>
           <tr><td>random routing</td><td>0.792</td><td>0.875</td><td>0.833</td></tr>
-          <tr><td>glm-5p2</td><td>0.794</td><td>0.783</td><td>0.789</td></tr>
-          <tr><td>kimi-k2p6</td><td>0.742</td><td>0.539</td><td>0.640</td></tr>
+          <tr><td>gemini-3.1-flash-lite</td><td>0.794</td><td>0.783</td><td>0.789</td></tr>
+          <tr><td>deepseek-v4-flash</td><td>0.742</td><td>0.539</td><td>0.640</td></tr>
         </tbody>
       </table>
     </div>
@@ -398,7 +398,7 @@
     <div class="faq-grid">
       <div class="faq-item">
         <h3>What does it cost to compete?</h3>
-        <p>~$25–65 in Fireworks API credits per training run, plus a GPU (T4 at ~$0.20/hr) or CPU (free, slower). The encoder is only 0.6B parameters — it runs on anything.</p>
+        <p>~$25–65 in OpenRouter API credits per training run, plus a GPU (T4 at ~$0.20/hr) or CPU (free, slower). The encoder is only 0.6B parameters — it runs on anything.</p>
       </div>
       <div class="faq-item">
         <h3>How is my submission evaluated?</h3>
@@ -414,7 +414,7 @@
       </div>
       <div class="faq-item">
         <h3>How do you prevent cheating?</h3>
-        <p>Eight automated anti-cheat gates: rate limiting, NaN/Inf detection, cosine-similarity duplicate detection against all previous heads, receipt cross-validation (cost ≥ $15, plausible fitness curve), overfit rejection, and minimized score feedback.</p>
+        <p>Five automated anti-cheat gates: rate limiting, NaN/Inf detection, cosine-similarity duplicate detection against all previous heads, receipt cross-validation (cost ≥ $15, plausible fitness curve), overfit rejection, and minimized score feedback.</p>
       </div>
       <div class="faq-item">
         <h3>How does Gittensor pay me?</h3>

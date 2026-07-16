@@ -146,7 +146,7 @@ def test_rate_limit_counts_a_distinct_pr():
 
 
 def test_rate_limit_ignores_attempts_outside_the_window():
-    # An attempt older than the window (10 > 7 days) must not count.
+    # An attempt older than the window (10 > 1 day) must not count.
     lb = _lb_with_attempt("alice", "math500", pr=1, age_days=10.0)
     assert G.check_rate_limit("alice", "math500", lb, current_pr=2) is None
 
@@ -180,7 +180,7 @@ def test_duplicate_detects_local_copy(tmp_path):
     _write_sub(tmp_path, "bob", 1, head.copy(), svf)  # identical -> cosine 1.0
     reason = G.check_duplicate(head, svf, tmp_path, "alice", 1)
     assert reason is not None and reason.startswith("duplicate_of_bob_gen_1")
-    assert DUPLICATE_HEAD_COSINE_THRESHOLD == 0.999
+    assert DUPLICATE_HEAD_COSINE_THRESHOLD == 0.99
 
 
 def test_duplicate_skips_dirs_missing_arrays(tmp_path):

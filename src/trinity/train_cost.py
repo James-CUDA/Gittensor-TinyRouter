@@ -4,7 +4,7 @@ Why this exists
 ---------------
 SUBMITTING.md says a full training run costs "~$25-65" and the receipt gate
 (``submission.gates`` / ``MIN_TRAINING_COST_USD``) rejects a submission whose
-receipt shows less than $15 of spend. But nothing turns the *config* into that
+receipt shows less than $15 of spend / no spend. But nothing turns the *config* into that
 dollar figure ahead of time:
 
 * ``optim.budget.cmaes_budget`` gives the run's size in **atomic evaluations**
@@ -16,7 +16,7 @@ This module bridges them: it takes the sep-CMA-ES config knobs (population,
 m_cma, generations, turns), prices each atomic evaluation from the worker pool,
 and returns the projected USD spend with a per-model breakdown — so a paid run is
 never launched blind, and a contributor can see up front whether their planned
-run will even clear the $15 receipt floor.
+run will even clear the cost > $15 receipt floor receipt floor.
 
 Pure / deterministic / no network / no GPU / no torch.
 """
@@ -33,7 +33,7 @@ __all__ = ["TrainCostEstimate", "estimate_cmaes_cost"]
 try:
     from trinity.submission.constants import MIN_TRAINING_COST_USD
 except Exception:  # pragma: no cover - constants module optional in some envs
-    MIN_TRAINING_COST_USD = 15.0
+    MIN_TRAINING_COST_USD = 1.0
 
 
 @dataclass(frozen=True)

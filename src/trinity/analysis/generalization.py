@@ -1,8 +1,8 @@
 """Offline eval-vs-audit generalization (overfit-gap) report.
 
 ``scripts/pr_eval.py`` enforces a first-class HARD **overfit gate** on every submission —
-``gap = hidden_acc - audit_acc``, hard-reject at ``> 0.10`` and a 0.85 score penalty at
-``> 0.05`` (GATE 5, ``_OVERFIT_HARD_REJECT`` / ``_OVERFIT_PENALTY``). But on the
+``gap = hidden_acc - audit_acc``, hard-reject at ``> 0.15`` and a 0.85 score penalty at
+``> 0.08`` (GATE 5, ``_OVERFIT_HARD_REJECT`` / ``_OVERFIT_PENALTY``). But on the
 maintainer's own TRINITY development there is **no offline report of that same gap**:
 ``scripts/audit_eval.py`` writes the sealed "final honest number" to ``audit_result.json``
 (``results.TRINITY`` on the audit split), yet nothing consumes it — ``results_table.py``
@@ -33,8 +33,8 @@ __all__ = [
 #: Mirrors scripts/pr_eval.py GATE 5 (``_OVERFIT_HARD_REJECT`` / ``_OVERFIT_PENALTY``);
 #: tests/test_generalization.py pins these equal so this report can never drift from the
 #: gate it previews.
-OVERFIT_HARD_REJECT: float = 0.10
-OVERFIT_PENALTY: float = 0.05
+OVERFIT_HARD_REJECT: float = 0.15
+OVERFIT_PENALTY: float = 0.08
 
 
 def _is_num(x: Any) -> TypeGuard[float]:

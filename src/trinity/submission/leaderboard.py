@@ -13,7 +13,7 @@ priority: "leaderboard automation").
 problems (empty = clean). It is **read-only** — it detects tampering (an inflated
 ``best_score``, a score above the achievable ``oracle_ceiling``, a ``best_*`` pointer
 that doesn't match the winning history entry, a **truncated ``attempts`` ledger** that
-would let a past winner defeat the weekly rate limit, duplicate/mis-owned PRs, or
+would let a past winner defeat the daily rate limit, duplicate/mis-owned PRs, or
 non-monotone timestamps) and never modifies anything. It **reuses**
 ``gates.parse_utc_timestamp`` / ``gates.rate_limit_entries`` and the ``RATE_LIMIT_*``
 constants, so it can never drift from the gate that trusts the file. Pure python — no

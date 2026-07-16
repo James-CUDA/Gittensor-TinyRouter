@@ -39,7 +39,7 @@ def _load_yaml(path: str | Path) -> dict:
 def _resolve_x0(args, spec) -> np.ndarray:
     """CMA-ES initial mean: a supervised warm-start theta if given, else the zero init.
 
-    ``--warmstart-theta`` (IMPROVEMENTS.md #2) loads a pre-fit head produced by
+    ``--warmstart-theta`` (the improvement plan) loads a pre-fit head produced by
     ``scripts/warmstart_head.py``. Its length must match ``spec.n_total`` exactly,
     otherwise it is a layout mismatch and we refuse to start (a silent reshape would
     corrupt the head/SVF split).

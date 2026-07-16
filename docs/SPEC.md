@@ -21,7 +21,7 @@
   `o_proj 2048×1024→1024`, `gate_proj 1024×3072→1024`, `up_proj 1024×3072→1024`,
   `down_proj 3072×1024→1024`. **All 7 matrices give 1024 SVs each.**
 - **OpenRouter pool verified LIVE (HTTP 200, real completions):** `qwen3.5-35b-a3b`,
-  `minimax-m3`, `deepseek-v4-flash` all exist and answer.
+  `gemini-3.1-flash-lite`, `deepseek-v4-flash` all exist and answer.
 - **Remote box:** 8× H200 NVL (143 GB), GPU **index 5 only**, /mnt/data 3.2 TB free.
 
 ### 0.2 Corrected numbers (the review caught arithmetic errors below)
@@ -90,7 +90,7 @@ A tiny (**< 20K trainable params**) coordinator that, at each of up to **K=5** t
 
 ### 1.2 OUR setup (fixed)
 - **Coordinator SLM:** Qwen3-0.6B, run **locally on H200 GPU5**. Hidden dim `d_h = 1024`.
-- **Coordinated pool (L = 3) [REPLICATION DELTA]:** OpenRouter-served `qwen3.5-35b-a3b`, `minimax-m3`, `deepseek-v4-flash`. (Paper used L=7: GPT-5, Gemini-2.5-pro, Claude-Sonnet-4-20250514, Gemma-3-27B-It, DeepSeek-R1-Distill-Qwen-32B, Qwen3-32B reasoning, Qwen3-32B direct.)
+- **Coordinated pool (L = 3) [REPLICATION DELTA]:** OpenRouter-served `qwen3.5-35b-a3b`, `gemini-3.1-flash-lite`, `deepseek-v4-flash`. (Paper used L=7: GPT-5, Gemini-2.5-pro, Claude-Sonnet-4-20250514, Gemma-3-27B-It, DeepSeek-R1-Distill-Qwen-32B, Qwen3-32B reasoning, Qwen3-32B direct.)
 - **Head output `n_a = L + 3 = 6`** logits (3 agent + 3 role). Linear head = `6 × 1024 = 6,144` params (paper: 10,240 at L=7).
 - **Roles:** Thinker (T), Worker (W), Verifier (V).
 
@@ -394,7 +394,7 @@ We do **not** target absolute numbers. We target the **R1–R13 invariants** (Se
 ## 8. Module-by-Module Build Plan (`src/trinity/...`)
 
 ### `src/trinity/llm`
-- `pool.py`: registry of the 3 OpenRouter models (`qwen3.5-35b-a3b`, `minimax-m3`, `deepseek-v4-flash`) with agent IDs A0/A1/A2.
+- `pool.py`: registry of the 3 OpenRouter models (`qwen3.5-35b-a3b`, `gemini-3.1-flash-lite`, `deepseek-v4-flash`) with agent IDs A0/A1/A2.
 - `client.py`: async OpenRouter chat client; `generate(prompt, max_tokens=4096, temperature=0.0, reasoning="minimal")`. Retry/backoff. **[OUR CHOICE]** optional disk response cache keyed by (model, prompt-hash, decode-params) — paper never mentions caching; add it to cut atomic-eval cost since training repeats instances.
 - Maps "minimal reasoning effort" to each provider's knob.
 

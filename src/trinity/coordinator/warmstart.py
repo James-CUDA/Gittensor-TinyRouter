@@ -1,4 +1,4 @@
-"""Supervised warm-start of the coordinator head (IMPROVEMENTS.md #2).
+"""Supervised warm-start of the coordinator head (the improvement plan).
 
 The sep-CMA-ES search starts from a zero head (``params.initial_theta`` -> uniform
 policy), so the optimizer must rediscover routing from a single noisy binary bit

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a supervised warm-start theta for sep-CMA-ES (IMPROVEMENTS.md #2).
+"""Build a supervised warm-start theta for sep-CMA-ES (the improvement plan).
 
 Two modes:
 

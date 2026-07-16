@@ -72,7 +72,7 @@ General-improvement PRs (bug fixes, new adapters, docs) are welcome but
 | Copying another miner's head (cosine ≥ 0.999) | Gate 3 rejects |
 | Fabricating a training receipt | Gate 4 rejects (cost must be > $0 with ≥ 1 fitness entry) |
 | Forging cost in the ledger | Gate 5 rejects (hash-chain verification) |
-| Overfitting to the hidden eval (eval−audit gap > 0.10) | Gate 5 hard-rejects |
+| Overfitting to the hidden eval (eval−audit gap > 0.15) | Gate 5 hard-rejects |
 | Submitting more than once per day | Gate 1 rejects |
 | Modifying frozen files in a submission PR | Rejected by maintainer |
 | Probing the hidden benchmark (repeated losing submissions to extract per-component scores) | Only composite + delta revealed on loss; rate-limited daily |
@@ -94,7 +94,7 @@ bench_score = (0.70 × cached_acc + 0.15 × live_acc
 | **Live accuracy** | 15% | Correctness on 20 questions via full multi-turn T→W→V loop (real API) |
 | **Efficiency** | 10% | `((5 − avg_turns) / 4) × live_acc` — fewer turns is better, gated on live accuracy |
 | **Novelty** | 5% | Disagreement with the current king's routing decisions |
-| **Overfit penalty** | ×1.0 / ×0.85 / reject | eval−audit gap ≤ 0.05 / ≤ 0.10 / > 0.10 |
+| **Overfit penalty** | ×1.0 / ×0.85 / reject | eval−audit gap ≤ 0.05 / ≤ 0.10 / > 0.15 |
 
 ### Composite score
 
@@ -127,7 +127,7 @@ else:
 
 ## Submission rate
 
-- **1 submission per day (24-hour rolling window, enforced by Gate 1), enforced by Gate 1).
+- **1 submission per day (24-hour rolling window, enforced by Gate 1).
 - The slot is consumed when Gate 1 passes — **even if later gates fail or the
   score loses**. This prevents probing via repeated losing submissions.
 - Generation number auto-increments: `submissions/your-name/1/`, `2/`, `3/`...

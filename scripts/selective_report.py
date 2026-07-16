@@ -4,7 +4,7 @@
 Reads the ``oracle_matrix_<bench>.json`` files and reports, per model, the risk-coverage
 curve driven by self-consistency confidence (``max(p_hat, 1-p_hat)``): AURC, its gain over
 a random-ordering baseline, accuracy at a few coverage levels, and the abstention gain.
-This is the offline substrate for the IMPROVEMENTS.md #7 UCCI confidence-cascade idea —
+This is the offline substrate for the the improvement plan UCCI confidence-cascade idea —
 whether abstaining on a model's least self-consistent queries actually buys accuracy.
 
     python scripts/selective_report.py experiments/final/oracle_matrix_*.json

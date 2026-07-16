@@ -140,7 +140,7 @@ Let `H = routing_headroom` measured at the widest reachability level (L2 if run,
   disagreement and `unroutable_noise`; recommend swapping the most redundant model (highest pairwise
   agreement, fewest unique solves) for one correct on a disjoint slice.
 - **Router-bound (headroom exists, router leaves it on the table):** lower CI bound of `H` > 0 AND
-  `router_gap_closed` < ~0.5. Action: pursue IMPROVEMENTS.md #2 (warm-start), #3 (shaped fitness),
+  `router_gap_closed` < ~0.5. Action: pursue the improvement plan (warm-start), #3 (shaped fitness),
   #4 (LRA), #5 (feature).
 - **Near-ceiling (router already good):** `H` real AND `router_gap_closed` high. Action: gains require a
   better pool, not more router tuning.
@@ -182,7 +182,7 @@ New script `scripts/oracle_ceiling.py` (plus a small extension to the eval path 
 
 - Core L0 matrix: 3 models x 120 queries x K=5 = 1,800 calls per benchmark. Math (long reasoning) is the
   expensive side; MMLU is cheap and near-deterministic (K=3 -> 1,080 calls).
-- Estimate ~$8 to $12 total for L0 on both benchmarks at current Fireworks rates; L1 (x roles) and L2
+- Estimate ~$8 to $12 total for L0 on both benchmarks at current OpenRouterrates; L1 (x roles) and L2
   (multi-turn probe) add more and are optional second steps gated on the L0 verdict.
 - We can partly reuse the rigorous eval's already-paid compute if we re-run with per-query logging; the
   matrix is what was missing, not the calls.

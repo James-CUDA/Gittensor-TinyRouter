@@ -5,7 +5,7 @@ This is the maintainer's tool. It evaluates a miner's submitted routing head
 against the HIDDEN benchmark (stored OUTSIDE the repo — never committed) and
 determines whether the head beats the current best accuracy.
 
-All 8 anti-cheat gates run BEFORE any GPU work or API calls. A failing gate
+4 pre-eval gates run before GPU/API work (a 5th overfit gate runs post-eval). A failing gate
 rejects the submission immediately with zero cost to the maintainer.
 
 Usage:
@@ -376,10 +376,10 @@ def _empty_bench_entry() -> dict:
 
 def _record_attempt(benchmark: str, miner_name: str, generation: int,
                     pr_number: int) -> None:
-    """Consume one weekly submission slot for ``miner_name`` on ``benchmark``.
+    """Consume one daily submission slot for ``miner_name`` on ``benchmark``.
 
     Called as soon as Gate 1 passes so later gate failures and score-rejections
-    still count toward the rate limit (SUBMITTING.md: 1 submission / week).
+    still count toward the rate limit (SUBMITTING.md: 1 submission / day).
     On first write, seeds ``attempts`` from legacy win-only ``history`` so a
     recent winner remains rate-limited after this change rolls out.
     """
@@ -486,7 +486,7 @@ async def evaluate_pr(pr_number: int, benchmark: str,
     if err:
         return _reject(err)
     # Slot consumed even if later gates fail or the score loses — otherwise
-    # rejected attempts never counted and miners could probe weekly.
+    # rejected attempts never counted and miners could probe daily.
     _record_attempt("composite", miner_name, generation, pr_number)
 
     # ══════════════════════════════════════════════════════════════
@@ -534,7 +534,7 @@ async def evaluate_pr(pr_number: int, benchmark: str,
     if err:
         return _reject(err)
 
-    print("[pr_eval] All 7 pre-eval gates passed ✓\n")
+    print("[pr_eval] All 4 pre-eval gates passed ✓\n")
 
     # ══════════════════════════════════════════════════════════════
     # Load encoder ONCE (shared across all benchmarks)

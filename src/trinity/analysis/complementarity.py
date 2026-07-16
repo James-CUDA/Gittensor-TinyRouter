@@ -4,7 +4,7 @@
 complementarity audit"* and its POOL_BOUND verdict declares *"the lever is the model
 pool, not the router"* — but it never says **which** model to swap. This module
 supplies the missing complementarity half that the plan
-(``docs/ORACLE_CEILING_DIAGNOSTIC.md`` §6) and ``docs/IMPROVEMENTS.md`` #1 call for:
+(``docs/ORACLE_CEILING_DIAGNOSTIC.md`` §6) and ``the improvement plan`` #1 call for:
 
   > recommend swapping the most redundant model (**highest pairwise agreement, fewest
   > unique solves**) for one correct on a disjoint slice.

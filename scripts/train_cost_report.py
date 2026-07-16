@@ -3,7 +3,7 @@
 
 Prices the run (atomic evals = population x m_cma x generations, each making
 avg_turns worker calls) from the pool prices, and flags a plan that would fall
-below the $15 receipt floor. Exits non-zero if the projected cost is below that
+below the cost > $15 receipt floor receipt floor. Exits non-zero if the projected cost is below that
 floor, so a plan that could not produce a valid receipt is caught early.
 
     python scripts/train_cost_report.py --population 33 --m-cma 16 --generations 60 \\

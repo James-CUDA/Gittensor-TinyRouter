@@ -73,7 +73,7 @@ Every non-obvious decision, mistake, or finding goes in
 
 | Rule | Detail |
 |---|---|
-| **Rate limit** | 1 submission per benchmark per week (enforced in code) |
+| **Rate limit** | 1 submission per day (enforced in code) |
 | **Original work** | Every submission is checked against all previous heads via cosine similarity. Copies are rejected |
 | **Hidden benchmark** | Encrypted, never revealed — don't ask for it |
 | **Score feedback** | Winners get full results. Losers get only composite score + delta — no component breakdown |

@@ -57,13 +57,13 @@ def test_unknown_worker_prices_at_zero_and_is_surfaced():
 # ---------------------------------------------------------------------------
 def test_below_receipt_floor_is_flagged_for_a_tiny_run():
     e = _est(generations=1, m_cma=1, population_size=2)
-    assert e.total_usd < 15.0 and e.below_receipt_floor
+    assert e.total_usd < 1.0 and e.below_receipt_floor
 
 
 def test_a_large_run_clears_the_floor():
-    e = _est()  # 33*16*60 atomic evals -> well above $15
+    e = _est()  # 33*16*60 atomic evals -> well above $1
     assert not e.below_receipt_floor
-    assert e.total_usd >= 15.0
+    assert e.total_usd >= 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -82,12 +82,12 @@ def test_negative_generations_raises_via_budget():
 def test_zero_generations_is_zero_cost():
     e = _est(generations=0)
     assert e.atomic_evals == 0 and e.worker_calls == 0 and e.total_usd == 0.0
-    assert e.below_receipt_floor  # $0 < $15
+    assert e.below_receipt_floor  # $0 < $1
 
 
 def test_estimate_roundtrips_to_dict():
     d = _est().to_dict()
-    assert d["min_receipt_usd"] == 15.0
+    assert d["min_receipt_usd"] == 1.0
     assert "per_model_usd" in d and d["assumptions"]["generations"] == 60
 
 

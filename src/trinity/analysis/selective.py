@@ -4,7 +4,7 @@ Every other ``oracle_matrix_<bench>.json`` consumer answers *every* query. But t
 self-consistency of a model's K samples is a cheap confidence signal: when the samples
 agree (``p_hat`` near 0 or 1) the majority answer is far more likely right than when they
 split (``p_hat`` near 0.5). This module asks the selective-prediction question that
-``docs/IMPROVEMENTS.md`` #7 (the UCCI "confidence-based turn stopping" cascade) needs an
+``the improvement plan`` #7 (the UCCI "confidence-based turn stopping" cascade) needs an
 offline substrate for: **if a model abstains on its least self-consistent queries, how
 much does accuracy on the answered set rise, and is that self-consistency confidence
 actually informative?**

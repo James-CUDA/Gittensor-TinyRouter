@@ -1,4 +1,4 @@
-"""Unit tests for the supervised warm-start (IMPROVEMENTS.md #2).
+"""Unit tests for the supervised warm-start (the improvement plan).
 
 Pure numpy, NO torch (the dev box has no torch). Covers: specialist routing is
 learned, the InfoNCE/CE loss decreases, packing places weights in the correct

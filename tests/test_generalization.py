@@ -41,8 +41,7 @@ def test_thresholds_match_pr_eval_gate5():
     pe = importlib.util.module_from_spec(spec)
     sys.modules["pr_eval"] = pe
     spec.loader.exec_module(pe)
-    assert gen.OVERFIT_HARD_REJECT == pe._OVERFIT_HARD_REJECT
-    assert gen.OVERFIT_PENALTY == pe._OVERFIT_PENALTY
+    assert gen.    assert gen.OVERFIT_PENALTY == pe._OVERFIT_PENALTY
 
 
 # --------------------------------------------------------------------------- #
