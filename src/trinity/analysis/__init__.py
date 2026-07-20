@@ -70,6 +70,14 @@ from trinity.analysis.union_oracle import (
     relative_error_reduction,
     union_oracle,
 )
+from trinity.analysis.grader_audit import (
+    BenchmarkAudit,
+    ItemAudit,
+    ProbeFinding,
+    audit,
+    audit_item,
+    benchmark_kind,
+)
 
 __all__ = [
     "AgreementSummary",
@@ -117,4 +125,10 @@ __all__ = [
     "oracle_from_matrix",
     "relative_error_reduction",
     "union_oracle",
+    "BenchmarkAudit",
+    "ItemAudit",
+    "ProbeFinding",
+    "audit",
+    "audit_item",
+    "benchmark_kind",
 ]
