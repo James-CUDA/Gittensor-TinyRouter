@@ -147,6 +147,8 @@ def test_no_reference_gives_neutral_novelty():
     assert r.novelty == NEUTRAL_NOVELTY
     assert r.differing_indices == [] and r.switched_from_to == {}
     assert r.n_questions == 2
+    assert r.agreement_rate == pytest.approx(1.0 - NEUTRAL_NOVELTY)
+    assert r.n_agree / r.n_questions == pytest.approx(r.agreement_rate)
 
 
 def test_report_roundtrips_to_dict():

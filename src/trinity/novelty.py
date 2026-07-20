@@ -163,8 +163,13 @@ def novelty_report(
         A :class:`NoveltyReport`.
     """
     if reference is None:
+        n = len(head)
+        # Keep n_agree consistent with agreement_rate so JSON consumers that
+        # recompute n_agree/n_questions match the reported rate (issue #390).
+        agree = 1.0 - neutral
+        n_agree = round(agree * n) if n else 0
         return NoveltyReport(
-            n_questions=len(head), n_agree=0, agreement_rate=1.0 - neutral,
+            n_questions=n, n_agree=n_agree, agreement_rate=agree,
             novelty=neutral, differing_indices=[], switched_from_to={},
         )
 
