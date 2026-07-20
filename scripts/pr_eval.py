@@ -325,8 +325,17 @@ def _compute_novelty(
     policy,
     spec,
     eval_items: List[dict],
+    submitter_theta: np.ndarray,
 ) -> float:
-    """Compare submitter vs benchmark king using full policy state (head + SVF)."""
+    """Compare submitter vs benchmark king using full policy state (head + SVF).
+
+    ``policy`` is the SHARED object the benchmark loop scores with, so this must hand it
+    back holding ``submitter_theta``. Loading the king's weights to collect its routing
+    decisions and leaving them in place scored every later benchmark as the king (only
+    the first benchmark computes novelty, so mmlu/livecodebench inherited the king's
+    accuracies). The restore runs in a ``finally`` so a failure mid-comparison cannot
+    leak the king's weights into the caller either.
+    """
     from trinity.novelty import NEUTRAL_NOVELTY, novelty_score
 
     lb = _load_leaderboard()
@@ -346,8 +355,11 @@ def _compute_novelty(
         np.asarray(king_hw, dtype=np.float64).ravel(),
         np.asarray(king_svf, dtype=np.float64).ravel(),
     ])
-    policy.configure(king_theta, spec)
-    king_decisions = _routing_decisions(policy, eval_items, ref_count=ref_count)
+    try:
+        policy.configure(king_theta, spec)
+        king_decisions = _routing_decisions(policy, eval_items, ref_count=ref_count)
+    finally:
+        policy.configure(submitter_theta, spec)
 
     return novelty_score(submitter_decisions, king_decisions)
 
@@ -571,10 +583,11 @@ async def evaluate_pr(pr_number: int, benchmark: str,
         n_models=3, n_roles=3,
         l2_normalize=cc["hidden_state"].get("l2_normalize", True),
     )
-    policy.configure(np.concatenate([
+    submitter_theta = np.concatenate([
         np.asarray(head_W, dtype=np.float64).ravel(),
         np.asarray(svf_scales, dtype=np.float64).ravel(),
-    ]), spec)
+    ])
+    policy.configure(submitter_theta, spec)
 
     pool = OpenRouterPool(str(_REPO / "configs" / "models.yaml"))
 
@@ -607,7 +620,8 @@ async def evaluate_pr(pr_number: int, benchmark: str,
         live_acc, avg_turns = await _evaluate_live(policy, pool, _POOL_MODELS, live_items)
         print(f"  live_acc   = {live_acc:.4f}  avg_turns = {avg_turns:.2f}")
 
-        novelty = _compute_novelty(bench, policy, spec, eval_items) if bench == benchmarks[0] else 0.0
+        novelty = (_compute_novelty(bench, policy, spec, eval_items, submitter_theta)
+                   if bench == benchmarks[0] else 0.0)
         if novelty:
             print(f"  novelty    = {novelty:.4f}")
 
