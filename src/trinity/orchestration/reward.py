@@ -503,6 +503,116 @@ def _unwrap_font_commands(s: str) -> str:
     return s
 
 
+_FRACTION_COMMANDS = ("dfrac", "tfrac", "frac")
+
+#: A division operand that never needs parentheses: a signed number or bare
+#: identifier, a lone LaTeX command such as ``\pi``, or a single function call
+#: such as ``sqrt(2)``.
+_SINGLE_ATOM_RE = re.compile(r"-?(?:\\[A-Za-z]+|[A-Za-z]\w*\([^()]*\)|[\w.]+)")
+
+#: Bound on the \frac/\sqrt fixed-point loop. Each pass strictly consumes at
+#: least one wrapper, so real answers converge in one or two; the cap only stops
+#: a pathological input from spinning.
+_MAX_UNWRAP_PASSES = 8
+
+
+def _scan_braced_group(s: str, start: int) -> tuple[str, int] | None:
+    """Read one balanced ``{...}`` group at or after ``start``, skipping spaces.
+
+    Returns the group's inner text and the index just past its closing brace, or
+    ``None`` when no balanced group begins there.
+    """
+    i = start
+    while i < len(s) and s[i] in " \t":
+        i += 1
+    if i >= len(s) or s[i] != "{":
+        return None
+    depth = 0
+    for j in range(i, len(s)):
+        if s[j] == "{":
+            depth += 1
+        elif s[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return s[i + 1 : j], j + 1
+    return None
+
+
+def _top_level_has(s: str, chars: str) -> bool:
+    """True when any of ``chars`` appears outside brackets, past position 0.
+
+    Position 0 is exempt so a leading sign is not mistaken for an operator.
+    """
+    depth = 0
+    for i, ch in enumerate(s):
+        if ch in "({[":
+            depth += 1
+        elif ch in ")}]":
+            depth -= 1
+        elif depth == 0 and ch in chars and i > 0:
+            return True
+    return False
+
+
+def _division_operand(text: str, *, denominator: bool) -> str:
+    r"""Parenthesize a fraction operand only where precedence requires it.
+
+    ``\frac{\sqrt{2}}{2}`` has to normalize to exactly ``sqrt(2)/2`` so it matches
+    a reference written ``\sqrt{2}/2``. Blanket ``(a)/(b)`` wrapping would leave
+    ``(sqrt(2))/(2)`` and reintroduce the very false negative this unwrapping
+    exists to remove. A numerator therefore only needs parentheses around a
+    top-level ``+``/``-``; a denominator needs them unless it is a single atom,
+    because ``1/(2sqrt(3))`` and ``1/2sqrt(3)`` are different values.
+    """
+    inner = text.strip()
+    if not inner:
+        return ""
+    if denominator:
+        needs = _SINGLE_ATOM_RE.fullmatch(inner) is None
+    else:
+        needs = _top_level_has(inner, "+-")
+    return f"({inner})" if needs else inner
+
+
+def _unwrap_fractions(s: str) -> str:
+    r"""Rewrite ``\frac``/``\dfrac``/``\tfrac`` to ``a/b`` by balanced-brace scan.
+
+    The previous single-level ``\{([^{}]+)\}`` regex could not match an operand
+    that itself contained braces, so ``\frac{\sqrt{2}}{2}`` kept its command name
+    verbatim — matching neither a plain reference nor sympy's parser, which made
+    every radical-over-integer answer a false negative (issue #409). This is the
+    same limitation #205 removed from :func:`_unwrap_font_commands`.
+
+    Nested fractions collapse because each rewrite rescans from its own start
+    offset. Unbalanced or operand-less occurrences are left untouched.
+    """
+    for cmd in _FRACTION_COMMANDS:
+        marker = f"\\{cmd}"
+        idx = 0
+        while True:
+            pos = s.find(marker, idx)
+            if pos == -1:
+                break
+            after = pos + len(marker)
+            num = _scan_braced_group(s, after)
+            if num is None:
+                idx = after
+                continue
+            den = _scan_braced_group(s, num[1])
+            if den is None:
+                idx = after
+                continue
+            repl = (
+                f"{_division_operand(num[0], denominator=False)}"
+                f"/{_division_operand(den[0], denominator=True)}"
+            )
+            s = s[:pos] + repl + s[den[1] :]
+            # Rescan from ``pos``: the numerator was spliced in unexamined and may
+            # itself hold a fraction of the same family.
+            idx = pos
+    return s
+
+
 def normalize_math_answer(ans: str | None) -> str:
     r"""Normalize a math answer string for robust comparison.
 
@@ -563,20 +673,27 @@ def normalize_math_answer(ans: str | None) -> str:
     # first, leaving a stray backslash ("\{1,2\}" -> "1,2\") that fails to match a
     # plainly-braced reference. Set-notation answers (\boxed{\{1,2,3\}}) hit this.
     s = re.sub(r"^\\?\{(.*?)\\?\}$", r"\1", s).strip()
-    # \frac{a}{b} -> a/b. The [dt]? matches the whole textstyle/displaystyle
-    # fraction family — \frac, \dfrac and \tfrac all render the same value, so they
-    # must normalize identically (else \tfrac{3}{4} is a false negative vs \dfrac).
-    s = re.sub(r"\\[dt]?frac\s*\{([^{}]+)\}\s*\{([^{}]+)\}", r"(\1)/(\2)", s)
-    s = re.sub(r"\\[dt]?frac\s*(\d)\s*(\d)", r"\1/\2", s)
-    # \sqrt{x} -> sqrt(x), and the unbraced single-token \sqrt2 -> sqrt(2). Like the
-    # \frac handling just above, the braced and bare forms render the SAME value, so
-    # they must normalize identically (else \sqrt{2} is a false negative against a
-    # reference written \sqrt2). Folding to sympy's ``sqrt(...)`` spelling also lets
-    # the symbolic fallback bridge value-equal forms like 2\sqrt{3} vs 2sqrt(3); the
-    # bare backslash of ``\sqrt`` otherwise makes parse_expr raise. Runs after \frac
-    # so a fraction nested inside the radicand is already unwrapped.
-    s = re.sub(r"\\sqrt\s*\{([^{}]*)\}", r"sqrt(\1)", s)
-    s = re.sub(r"\\sqrt\s*([0-9a-zA-Z])", r"sqrt(\1)", s)
+    # \frac{a}{b} -> a/b and \sqrt{x} -> sqrt(x), iterated to a fixed point.
+    #
+    # \frac unwrapping scans balanced braces, so the [dt]? family (\frac, \dfrac,
+    # \tfrac all render the same value) normalizes identically no matter how deep
+    # the operands nest. \sqrt's radicand regex still requires a brace-free body,
+    # so the two rewrites feed each other: a radical inside a fraction operand
+    # (\frac{\sqrt{2}}{2}) needs \sqrt to run first, while a fraction inside a
+    # radicand (\sqrt{\frac{1}{2}}) needs \frac to run first. Looping until the
+    # string stops changing handles both without privileging either order.
+    #
+    # Folding \sqrt to sympy's ``sqrt(...)`` spelling also lets the symbolic
+    # fallback bridge value-equal forms like 2\sqrt{3} vs 2sqrt(3); the bare
+    # backslash of ``\sqrt`` otherwise makes parse_expr raise.
+    for _ in range(_MAX_UNWRAP_PASSES):
+        before = s
+        s = re.sub(r"\\sqrt\s*\{([^{}]*)\}", r"sqrt(\1)", s)
+        s = re.sub(r"\\sqrt\s*([0-9a-zA-Z])", r"sqrt(\1)", s)
+        s = _unwrap_fractions(s)
+        s = re.sub(r"\\[dt]?frac\s*(\d)\s*(\d)", r"\1/\2", s)
+        if s == before:
+            break
     s = s.replace(r"\cdot", "*").replace(r"\times", "*")
     # Canonicalize the constant pi to a bare ``pi`` token. Models and datasets
     # write the same value three ways — the LaTeX ``\pi`` command, the Unicode
@@ -589,10 +706,11 @@ def normalize_math_answer(ans: str | None) -> str:
     # (the product symbol) is intentionally left untouched.
     s = re.sub(r"\\pi(?![a-zA-Z])", "pi", s)
     s = s.replace("π", "pi")
-    # The fraction normalizer wraps arbitrary operands, so ``\frac{\pi}{2}``
-    # becomes ``(pi)/(2)`` while ``\pi/2`` becomes ``pi/2``. Remove only
-    # standalone atomic operands adjacent to division; this keeps function-call
-    # parentheses such as ``sqrt(2)`` intact without requiring optional sympy.
+    # Belt and braces for parenthesized atomic operands. The fraction normalizer
+    # no longer wraps an atom, but an answer can arrive already written ``(pi)/(2)``
+    # and must still match ``pi/2``. Remove only standalone atomic operands
+    # adjacent to division; this keeps function-call parentheses such as
+    # ``sqrt(2)`` intact without requiring optional sympy.
     s = re.sub(r"(^|/)\((pi|\d+)\)(?=/|$)", r"\1\2", s)
     s = re.sub(r"\s+", "", s)
     # LaTeX digit grouping "1{,}000" -> "1,000" so the comma-strip below removes it
@@ -605,17 +723,27 @@ def normalize_math_answer(ans: str | None) -> str:
     if not structured_answer:
         s = re.sub(r"(?<=\d),(?=\d{3}(?:\D|$))", "", s)
     s = s.lower()
-    # Canonicalize a pure integer ratio a/b. A leading sign may sit OUTSIDE the
-    # parentheses: a negated LaTeX fraction (\-frac{3}{4}) normalizes to
+    # Canonicalize a pure integer division chain. A leading sign may sit OUTSIDE
+    # the parentheses: a negated LaTeX fraction (\-frac{3}{4}) normalizes to
     # "-(3)/(4)", so the minus precedes the numerator's paren and must still be
-    # read as -3/4 (else -\frac{3}{4} never matches -3/4 or -0.75).
-    m = re.fullmatch(r"(-?)\(?(-?\d+)\)?/\(?(-?\d+)\)?", s)
-    if m:
+    # read as -3/4 (else -\frac{3}{4} never matches -3/4 or -0.75). More than one
+    # division appears when a fraction nested in a numerator is unwrapped
+    # (\frac{\frac{1}{2}}{3} -> 1/2/3); folding left-associatively reduces it to
+    # the 1/6 the LaTeX renders, without needing the optional sympy fallback.
+    # Each operand must be wholly bare or wholly parenthesized: a loose ``\(?``
+    # would also match the unbalanced "1/(2" of ``1/(2/3)`` and fold that grouped
+    # denominator to 1/6, a false positive. A grouped sub-ratio is left for the
+    # numeric/symbolic comparison instead.
+    m = re.fullmatch(r"(-?)((?:\(-?\d+\)|-?\d+)(?:/(?:\(-?\d+\)|-?\d+))*)", s)
+    if m and "/" in m.group(2):
         try:
-            num = int(m.group(2))
+            parts = [int(p.replace("(", "").replace(")", "")) for p in m.group(2).split("/")]
+            value = Fraction(parts[0])
             if m.group(1) == "-":
-                num = -num
-            return str(Fraction(num, int(m.group(3))))
+                value = -value
+            for divisor in parts[1:]:
+                value /= divisor
+            return str(value)
         except (ZeroDivisionError, ValueError):
             pass
     return s
