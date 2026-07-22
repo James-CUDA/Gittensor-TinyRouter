@@ -812,6 +812,38 @@ _COMMITTED_ANSWER_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\\boxed\s*\{\s*\(?\s*([A-J])\s*\)?\s*\}", re.I),
     re.compile(r"\bfinal\s+answer\s*[:=]?\s*\(?\s*([A-J])(?![A-Za-z])", re.I),
 )
+#: The only single-letter words in English, and both fall inside the ``A``-``J``
+#: choice range: the article ``a`` and the pronoun ``I``. Spelling matters — a
+#: model committing to choice A writes an uppercase ``A``, whereas the article is
+#: lowercase — so only these exact forms are ambiguous. Uppercase ``A`` is
+#: deliberately absent: treating it as prose would drop the common and genuine
+#: "The answer is A because ..." for the sake of a far rarer capitalized article.
+_WORD_LETTERS = frozenset({"a", "I"})
+
+#: Characters that delimit a committed choice letter. ``}`` closes a
+#: ``\boxed{a}``, the rest close a clause, and a newline ends the line. An
+#: article is never followed by any of them — it runs on into its noun phrase.
+_CHOICE_DELIMITERS = ").:,}\r\n"
+
+
+def _is_prose_word(text: str, match: re.Match[str]) -> bool:
+    r"""True when a captured letter is an English word rather than a committed choice.
+
+    ``[A-J]`` under ``re.I`` also matches the article ``a`` and the pronoun ``I``,
+    and the committed-answer patterns accept a ZERO-WIDTH ``\b`` as their
+    delimiter — which the space after an article satisfies. So "the answer is a
+    decrease in pressure" read as choice A, both grading that wrong answer 1.0
+    against reference A and, because the trailing sentence outranks an earlier
+    match, overriding a genuine ``\boxed{C}`` (issue #413).
+
+    A committed letter is always delimited; an article is not.
+    """
+    if match.group(1) not in _WORD_LETTERS:
+        return False
+    tail = text[match.end(1):].lstrip(" \t")
+    return bool(tail) and tail[0] not in _CHOICE_DELIMITERS
+
+
 # Weaker cues, kept as strictly lower tiers so they never override a committed answer:
 # ``option B`` often *discusses* a choice ("option B is wrong"), and a bare ``B)`` line
 # is usually part of an option list the model echoes back. Each is taken as its own
@@ -860,6 +892,9 @@ def extract_choice_letter(text: str) -> str | None:
     best: tuple[tuple[int, int], str] | None = None
     for priority, pat in enumerate(_COMMITTED_ANSWER_PATTERNS):
         for cm in pat.finditer(text):
+            # An undelimited "a"/"I" here is English prose, not a commitment.
+            if _is_prose_word(text, cm):
+                continue
             key = (cm.end(), -priority)
             if best is None or key > best[0]:
                 best = (key, cm.group(1).upper())
