@@ -86,6 +86,14 @@ from trinity.analysis.grader_audit import (
     audit_item,
     benchmark_kind,
 )
+from trinity.analysis.union_diagnostics import (
+    UnionModelSampling,
+    UnionModelSelective,
+    UnionSamplingSummary,
+    UnionSelectiveSummary,
+    union_sampling,
+    union_selective,
+)
 
 __all__ = [
     "AgreementSummary",
@@ -145,4 +153,10 @@ __all__ = [
     "CohortSummary",
     "TransferSummary",
     "classify",
+    "UnionModelSampling",
+    "UnionModelSelective",
+    "UnionSamplingSummary",
+    "UnionSelectiveSummary",
+    "union_sampling",
+    "union_selective",
 ]
