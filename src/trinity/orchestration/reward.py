@@ -388,19 +388,25 @@ def extract_boxed(text: str) -> str | None:
 
 
 def extract_last_number(text: str) -> str | None:
-    """Extract the last numeric literal from ``text``.
+    """Extract the last numeric literal (or LaTeX math term) from ``text``.
 
     Used as a fallback when no ``\\boxed{...}`` answer is present. Recognizes
     integers, decimals, signed numbers, and thousands separators (commas are
-    stripped). Trailing punctuation (a sentence-ending period) is not consumed
-    as a decimal point.
+    stripped), plus the LaTeX fraction/radical terms ``\\frac{a}{b}`` (and the
+    ``\\dfrac``/``\\tfrac``/``\\frac12`` spellings) and ``[k]\\sqrt{x}`` — an
+    un-boxed final answer such as ``$\\frac{1}{2}$`` or ``$2\\sqrt{3}$`` must be
+    captured whole; the digit-only alternatives would otherwise read it as its
+    operand digits and return the denominator/radicand (``2``, ``3``) — a value
+    the model never answered, which both fails the true reference and can
+    *match* a wrong one. Trailing punctuation (a sentence-ending period) is not
+    consumed as a decimal point.
 
     Args:
         text: Arbitrary model output.
 
     Returns:
-        The last number as a string (commas removed), or ``None`` if no number
-        is found.
+        The last number (commas removed) or LaTeX term as a string, or ``None``
+        if neither is found.
     """
     if not text:
         return None
@@ -408,10 +414,19 @@ def extract_last_number(text: str) -> str | None:
     # comma so the thousands-separator branch below reads it as one number instead
     # of splitting it into "1" and "000".
     text = text.replace("{,}", ",")
-    # Match a simple fraction a/b FIRST (so "1/2" is kept whole, not read as "2"),
-    # then decimals/integers like -1,234.56 or 42 or .5 ; require a digit somewhere.
+    # A braced LaTeX operand, allowing one nesting level (\frac{\sqrt{2}}{2}).
+    brace = r"\{(?:[^{}]|\{[^{}]*\})*\}"
+    # Match LaTeX \frac / \sqrt terms FIRST so they are consumed as one token
+    # (their operand digits must not be read as standalone numbers), then a
+    # simple fraction a/b (so "1/2" is kept whole, not read as "2"), then
+    # decimals/integers like -1,234.56 or 42 or .5 ; require a digit somewhere.
+    # A plain number stated later in the text still wins: the LAST match is
+    # returned regardless of which alternative produced it. The (?![a-zA-Z])
+    # guards keep \frac / \sqrt from matching a prefix of a longer macro name.
     pattern = re.compile(
-        r"-?\d+\s*/\s*-?\d+"
+        rf"-?\\[dt]?frac(?![a-zA-Z])\s*(?:{brace}\s*{brace}|\d\s*\d)"
+        rf"|-?\d*\s*\\sqrt(?![a-zA-Z])\s*(?:{brace}|[0-9a-zA-Z])"
+        r"|-?\d+\s*/\s*-?\d+"
         r"|-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
         r"|-?\.\d+"
     )
