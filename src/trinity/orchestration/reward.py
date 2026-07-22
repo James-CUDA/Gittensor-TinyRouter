@@ -387,19 +387,107 @@ def extract_boxed(text: str) -> str | None:
     return results[-1] if results else None
 
 
+def _scan_balanced_braces(s: str, open_idx: int) -> int | None:
+    """Return index of the closing ``}`` matching ``s[open_idx] == '{'``, else ``None``."""
+    if open_idx >= len(s) or s[open_idx] != "{":
+        return None
+    depth = 0
+    for j in range(open_idx, len(s)):
+        if s[j] == "{":
+            depth += 1
+        elif s[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return j
+    return None
+
+
+def _iter_latex_frac_sqrt_spans(text: str) -> list[tuple[int, int, str]]:
+    r"""Locate ``\frac``/``\dfrac``/``\tfrac`` and ``[k]\sqrt`` spans with balanced braces.
+
+    Used so an un-boxed final answer like ``$\frac{1}{2}$`` is taken as one term
+    instead of its operand digits (issue #419). Nested one-level braces
+    (``\frac{\sqrt{2}}{2}``) are included.
+    """
+    spans: list[tuple[int, int, str]] = []
+    i = 0
+    while i < len(text):
+        if text.startswith(("\\dfrac", "\\tfrac", "\\frac"), i):
+            if text.startswith("\\dfrac", i) or text.startswith("\\tfrac", i):
+                cmd_end = i + 6
+            else:
+                cmd_end = i + 5
+            # Do not match a prefix of a longer macro name.
+            if cmd_end < len(text) and text[cmd_end].isalpha():
+                i += 1
+                continue
+            j = cmd_end
+            while j < len(text) and text[j] in " \t":
+                j += 1
+            # braced form \frac{a}{b}
+            if j < len(text) and text[j] == "{":
+                n_close = _scan_balanced_braces(text, j)
+                if n_close is not None:
+                    k = n_close + 1
+                    while k < len(text) and text[k] in " \t":
+                        k += 1
+                    if k < len(text) and text[k] == "{":
+                        d_close = _scan_balanced_braces(text, k)
+                        if d_close is not None:
+                            spans.append((i, d_close + 1, text[i : d_close + 1]))
+                            i = d_close + 1
+                            continue
+            # bare \frac12
+            m = re.match(r"(\d)\s*(\d)", text[j:])
+            if m:
+                end = j + m.end()
+                spans.append((i, end, text[i:end]))
+                i = end
+                continue
+            i = cmd_end
+            continue
+        if text.startswith("\\sqrt", i):
+            cmd_end = i + 5
+            if cmd_end < len(text) and text[cmd_end].isalpha():
+                i += 1
+                continue
+            # optional leading coefficient digits immediately before \sqrt
+            start = i
+            k = i - 1
+            while k >= 0 and text[k].isdigit():
+                start = k
+                k -= 1
+            if k >= 0 and text[k] == "-":
+                start = k
+            j = cmd_end
+            while j < len(text) and text[j] in " \t":
+                j += 1
+            if j < len(text) and text[j] == "{":
+                close = _scan_balanced_braces(text, j)
+                if close is not None:
+                    spans.append((start, close + 1, text[start : close + 1]))
+                    i = close + 1
+                    continue
+            if j < len(text) and text[j].isalnum():
+                spans.append((start, j + 1, text[start : j + 1]))
+                i = j + 1
+                continue
+            i = cmd_end
+            continue
+        i += 1
+    return spans
+
+
 def extract_last_number(text: str) -> str | None:
-    """Extract the last numeric literal (or LaTeX math term) from ``text``.
+    """Extract the last numeric literal (or LaTeX ``\\frac``/``\\sqrt`` term) from ``text``.
 
     Used as a fallback when no ``\\boxed{...}`` answer is present. Recognizes
     integers, decimals, signed numbers, and thousands separators (commas are
-    stripped), plus the LaTeX fraction/radical terms ``\\frac{a}{b}`` (and the
-    ``\\dfrac``/``\\tfrac``/``\\frac12`` spellings) and ``[k]\\sqrt{x}`` — an
-    un-boxed final answer such as ``$\\frac{1}{2}$`` or ``$2\\sqrt{3}$`` must be
-    captured whole; the digit-only alternatives would otherwise read it as its
-    operand digits and return the denominator/radicand (``2``, ``3``) — a value
-    the model never answered, which both fails the true reference and can
-    *match* a wrong one. Trailing punctuation (a sentence-ending period) is not
-    consumed as a decimal point.
+    stripped), plus LaTeX fraction/radical terms so an un-boxed final answer
+    like ``$\\frac{1}{2}$`` is not read as its operand digit ``2`` (issue #419).
+    Trailing punctuation (a sentence-ending period) is not consumed as a decimal
+    point. When both a LaTeX term and a plain number appear, the one that ends
+    last in the text wins.
 
     Args:
         text: Arbitrary model output.
@@ -414,15 +502,12 @@ def extract_last_number(text: str) -> str | None:
     # comma so the thousands-separator branch below reads it as one number instead
     # of splitting it into "1" and "000".
     text = text.replace("{,}", ",")
-    # A braced LaTeX operand, allowing one nesting level (\frac{\sqrt{2}}{2}).
+    candidates: list[tuple[int, str]] = []
+    for _start, end, term in _iter_latex_frac_sqrt_spans(text):
+        candidates.append((end, term))
+    # Match a simple fraction a/b FIRST (so "1/2" is kept whole, not read as "2"),
+    # then decimals/integers like -1,234.56 or 42 or .5 ; require a digit somewhere.
     brace = r"\{(?:[^{}]|\{[^{}]*\})*\}"
-    # Match LaTeX \frac / \sqrt terms FIRST so they are consumed as one token
-    # (their operand digits must not be read as standalone numbers), then a
-    # simple fraction a/b (so "1/2" is kept whole, not read as "2"), then
-    # decimals/integers like -1,234.56 or 42 or .5 ; require a digit somewhere.
-    # A plain number stated later in the text still wins: the LAST match is
-    # returned regardless of which alternative produced it. The (?![a-zA-Z])
-    # guards keep \frac / \sqrt from matching a prefix of a longer macro name.
     pattern = re.compile(
         rf"-?\\[dt]?frac(?![a-zA-Z])\s*(?:{brace}\s*{brace}|\d\s*\d)"
         rf"|-?\d*\s*\\sqrt(?![a-zA-Z])\s*(?:{brace}|[0-9a-zA-Z])"
@@ -432,10 +517,12 @@ def extract_last_number(text: str) -> str | None:
         r"|-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
         r"|-?\.\d+"
     )
-    matches = pattern.findall(text)
-    if not matches:
+    for m in pattern.finditer(text):
+        candidates.append((m.end(), m.group(0).replace(",", "").replace(" ", "")))
+    if not candidates:
         return None
-    return matches[-1].replace(",", "").replace(" ", "")
+    candidates.sort(key=lambda item: item[0])
+    return candidates[-1][1]
 
 
 def _is_thousands_grouped_number(s: str) -> bool:
