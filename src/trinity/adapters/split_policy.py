@@ -54,6 +54,15 @@ _SPLIT_ALIASES: dict[str, dict[str, str]] = {
         "training": "train",
         "test": "train",
     },
+    # DROP (ucinlp/drop) publishes only ``train`` and ``validation`` — its ``test``
+    # set is hidden (leaderboard-only). Logical ``test`` must read ``validation``,
+    # or the loader finds no rows and silently serves the 2-item toy set (same
+    # failure mode as the benchmarks above). ``train`` maps to the real upstream
+    # ``train`` split, so no holdout carving is needed — the two never overlap.
+    "drop": {
+        "test": "validation",
+        "eval": "validation",
+    },
 }
 
 #: Seed for the deterministic holdout partition. Fixed: changing it silently

@@ -24,6 +24,7 @@ from trinity.types import Task
 from .base import BenchmarkAdapter, TaskType
 from .registry import register_adapter
 from trinity.orchestration.reward import extract_boxed
+from .split_policy import resolve_split, warn_on_toy_fallback
 
 __all__ = [
     "BENCHMARK",
@@ -296,13 +297,20 @@ def _make_task(index: int, passage: str, question: str, gold_answers: list[str])
 
 
 def _hf_drop(split: str) -> list[Task] | None:
-    """Load DROP from HuggingFace, or ``None`` on any failure."""
+    """Load DROP from HuggingFace, or ``None`` on any failure.
+
+    ``ucinlp/drop`` publishes only ``train`` and ``validation`` (DROP's test set
+    is hidden, leaderboard-only), so the logical ``test`` split is resolved to
+    ``validation`` via :func:`resolve_split`. Without that mapping every eval
+    request raised inside ``load_dataset`` and was swallowed into the 2-item toy
+    fallback — issue #50's failure mode, silently.
+    """
     try:
         from datasets import load_dataset
     except Exception:
         return None
     try:
-        ds = load_dataset(_HF_DATASET, split=split or "validation")
+        ds = load_dataset(_HF_DATASET, split=resolve_split(BENCHMARK, split))
     except Exception:
         return None
 
@@ -333,12 +341,16 @@ def load_drop_tasks(split: str, max_items: int | None, seed: int = 0) -> list[Ta
     """Load DROP as a deterministic list of :class:`Task`.
 
     Tries HuggingFace (lazy/guarded); on any failure falls back to the built-in toy
-    set. Applies a ``seed``-seeded shuffle and truncates to ``max_items``, so repeated
-    calls with identical arguments return identical lists.
+    set **loudly** (:class:`~trinity.adapters.split_policy.ToyFallbackWarning`), so
+    the eval/train toy guards can refuse to score it. Applies a ``seed``-seeded
+    shuffle and truncates to ``max_items``, so repeated calls with identical
+    arguments return identical lists.
     """
     import random
 
-    tasks = _hf_drop(split) or _toy_drop()
+    hf_tasks = _hf_drop(split)
+    warn_on_toy_fallback(BENCHMARK, split, used_toy=hf_tasks is None)
+    tasks = hf_tasks or _toy_drop()
     tasks = list(tasks)
     random.Random(seed).shuffle(tasks)
     if max_items is not None:
