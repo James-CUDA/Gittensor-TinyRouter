@@ -23,6 +23,7 @@ from trinity.types import Task
 
 from .base import BenchmarkAdapter, TaskType
 from .registry import register_adapter
+from trinity.orchestration.reward import extract_boxed
 
 __all__ = [
     "BENCHMARK",
@@ -102,17 +103,30 @@ def _final_answer_segment(text: str) -> str:
     Prefers the text after the **last** explicit ``"answer is"`` / ``"answer:"`` lead
     (final answers come last), skipping a trailing lead with no content after it; else
     the last non-empty line. Returns ``""`` for empty input.
+
+    If the selected segment (or the whole text) contains ``\\boxed{...}``, return that
+    box contents — ``format_hint("drop")`` tells models to box, but the DROP metric
+    otherwise treats ``\\boxed{21}`` as litter and scores 0.0 (issue #437).
     """
     if not text:
         return ""
+
+    def _maybe_unbox(segment: str) -> str:
+        boxed = extract_boxed(segment)
+        return boxed if boxed is not None else segment
+
     for lead in reversed(list(_ANSWER_LEAD.finditer(text))):
         after = text[lead.end():].strip()
         if after:
             first = after.splitlines()[0].strip()
             if first:
-                return first
+                return _maybe_unbox(first)
     last_line = next((ln for ln in reversed(text.splitlines()) if ln.strip()), "")
-    return last_line.strip()
+    if last_line.strip():
+        return _maybe_unbox(last_line.strip())
+    # No lead / line content, but a box may still carry the answer.
+    boxed = extract_boxed(text)
+    return boxed if boxed is not None else ""
 
 
 #: Surrounding punctuation stripped from a token, EXCLUDING the signs ``+``/``-`` — a

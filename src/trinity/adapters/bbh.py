@@ -195,7 +195,7 @@ def score_bbh(candidate: str, reference: Any) -> float:
     ``reference`` is the :class:`BBHReference` dict; a bare string reference is treated
     as an exact-match target.
     """
-    from trinity.orchestration.reward import extract_choice_letter
+    from trinity.orchestration.reward import extract_boxed, extract_choice_letter
 
     if isinstance(reference, dict):
         gold = str(reference.get("answer", ""))
@@ -210,7 +210,13 @@ def score_bbh(candidate: str, reference: Any) -> float:
         gold_letter = extract_choice_letter(gold)
         return 1.0 if cand_letter is not None and cand_letter == gold_letter else 0.0
 
-    cand = _normalize_exact(_final_answer_segment(candidate))
+    # format_hint tells BBH models to \boxed{}; peel before exact-match normalize
+    # or "\boxed{True}" never equals gold "True" (issue #437).
+    segment = _final_answer_segment(candidate)
+    boxed = extract_boxed(segment) or extract_boxed(candidate)
+    if boxed is not None:
+        segment = boxed
+    cand = _normalize_exact(segment)
     return 1.0 if cand and cand == _normalize_exact(gold) else 0.0
 
 
