@@ -81,6 +81,22 @@ access_list = ["all", "all", "all"]
     assert [s.subtask for s in wf.steps] == ["solve", "check", "answer"]
 
 
+def test_parse_accepts_named_lists_in_noncanonical_order():
+    # The three lists are disambiguated by name, so a well-formed proposal that
+    # emits them in a non-canonical textual order (here access_list before
+    # subtasks) must still parse. Ordering was never semantically required.
+    txt = """
+model_id = [0, 1]
+access_list = [[], [0]]
+subtasks = ["Solve the problem.", "State the final answer."]
+"""
+    wf, ok = parse_workflow(txt, n_workers=3)
+    assert ok and wf is not None
+    assert [s.model_id for s in wf.steps] == [0, 1]
+    assert [s.subtask for s in wf.steps] == ["Solve the problem.", "State the final answer."]
+    assert [s.access for s in wf.steps] == [[], [0]]
+
+
 def test_parse_normalizes_common_access_shorthands():
     one_step = """
 model_id = [0]
