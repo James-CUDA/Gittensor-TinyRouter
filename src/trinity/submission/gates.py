@@ -16,6 +16,7 @@ import numpy as np
 
 from trinity.llm.cost_ledger import read_ledger_entries, verify_ledger_chain
 from trinity.llm.openrouter_pricing import verified_ledger_total_usd
+from trinity.submission.frozen_files import audit_frozen_files
 from trinity.submission.constants import (
     DUPLICATE_HEAD_COSINE_THRESHOLD,
     EXPECTED_HEAD_SHAPE,
@@ -44,6 +45,7 @@ __all__ = [
     "validate_fitness_history_sequence",
     "audit_ledger_call_volume",
     "audit_head_routing_diversity",
+    "audit_frozen_files",
     "validate_pack_schema",
     "validate_theta_integrity",
     "OFFLINE_GATES",
@@ -77,6 +79,10 @@ class PreflightContext:
     pr_number: int | None = None
     ledger_path: str | None = None
     load_leaderboard: Callable[[], dict[str, Any]] | None = None
+    #: Repo-relative paths the submission PR changed (e.g. ``git diff --name-only``).
+    #: Optional: a miner running preflight locally has no PR diff, and the
+    #: frozen-file advisory stays silent when it is empty.
+    changed_paths: tuple[str, ...] = ()
 
 
 class SubmissionGate:
@@ -586,6 +592,11 @@ def _advisory_head_routing_diversity(pack: SubmissionPack, ctx: PreflightContext
     return audit_head_routing_diversity(pack.head_weights)
 
 
+def _advisory_frozen_files(pack: SubmissionPack, ctx: PreflightContext) -> Optional[str]:
+    del pack
+    return audit_frozen_files(ctx.changed_paths)
+
+
 def _gate_ledger_cost(pack: SubmissionPack, ctx: PreflightContext) -> Optional[str]:
     if not pack.receipt:
         return None
@@ -630,10 +641,17 @@ OFFLINE_GATES: tuple[SubmissionGate, ...] = (
 #:
 #: The first two rationales come from the review on the closed #210. Callers print these as
 #: ``[WARN]`` and MUST NOT fail a submission on them.
+#: * ``frozen_files`` — COMPETITION_RULES.md's anti-cheat table enforces every other
+#:   row with a numbered gate but leaves "modifying frozen files" to be "rejected by
+#:   maintainer". The check is mechanical, but its input is a PR diff that a local
+#:   preflight run does not have, so a *gate* would silently pass whenever
+#:   ``changed_paths`` is empty — passing for lack of evidence. As an advisory it
+#:   reports when it can and stays quiet when it cannot.
 OFFLINE_ADVISORIES: tuple[SubmissionGate, ...] = (
     SubmissionGate("fitness_history_sequence", _gate_fitness_history_sequence),
     SubmissionGate("ledger_call_volume", _advisory_ledger_call_volume),
     SubmissionGate("head_routing_diversity", _advisory_head_routing_diversity),
+    SubmissionGate("frozen_files", _advisory_frozen_files),
 )
 
 
