@@ -42,8 +42,11 @@ def test_all_three_checks_are_advisories_not_hard_gates():
     # inform rather than block: NONE of them may appear in OFFLINE_GATES.
     gate_names = {g.name for g in OFFLINE_GATES}
     advisory_names = {a.name for a in OFFLINE_ADVISORIES}
-    assert advisory_names == {"fitness_history_sequence", "ledger_call_volume",
-                              "head_routing_diversity"}
+    # #208's three must stay in the advisory tier. Later PRs may ADD advisories
+    # (``frozen_files`` did) -- that is what the tier is for -- so this is a
+    # subset check; the invariant that matters is the line below.
+    assert {"fitness_history_sequence", "ledger_call_volume",
+            "head_routing_diversity"} <= advisory_names
     assert not (advisory_names & gate_names)      # this PR adds ZERO new rejections
 
 
