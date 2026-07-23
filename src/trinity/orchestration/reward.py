@@ -518,6 +518,57 @@ def _unwrap_font_commands(s: str) -> str:
     return s
 
 
+_FRACTION_CMDS = ("dfrac", "tfrac", "frac")
+
+
+def _scan_brace_group(s: str, start: int) -> tuple[str, int] | None:
+    """Return ``(inner, index_after_closing_brace)`` for a balanced ``{...}`` at ``start``."""
+    i = start
+    while i < len(s) and s[i] in " \t":
+        i += 1
+    if i >= len(s) or s[i] != "{":
+        return None
+    depth = 0
+    for j in range(i, len(s)):
+        if s[j] == "{":
+            depth += 1
+        elif s[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return s[i + 1 : j], j + 1
+    return None
+
+
+def _unwrap_latex_fractions(s: str) -> str:
+    r"""Rewrite ``\frac``/``\dfrac``/``\tfrac`` to ``(a)/(b)`` with balanced braces.
+
+    The single-level ``[^{}]+`` regex cannot match an operand that itself contains
+    braces, so ``\frac{\sqrt{2}}{2}`` kept its command name and never compared equal
+    to ``\sqrt{2}/2`` (issue #409). Same balanced-brace approach as
+    :func:`_unwrap_font_commands`.
+    """
+    for cmd in _FRACTION_CMDS:
+        marker = f"\\{cmd}"
+        idx = 0
+        while True:
+            pos = s.find(marker, idx)
+            if pos == -1:
+                break
+            after = pos + len(marker)
+            num = _scan_brace_group(s, after)
+            if num is None:
+                idx = after
+                continue
+            den = _scan_brace_group(s, num[1])
+            if den is None:
+                idx = after
+                continue
+            repl = f"({num[0]})/({den[0]})"
+            s = s[:pos] + repl + s[den[1] :]
+            idx = pos  # rescan — numerator may hold another fraction
+    return s
+
+
 def normalize_math_answer(ans: str | None) -> str:
     r"""Normalize a math answer string for robust comparison.
 
@@ -578,10 +629,9 @@ def normalize_math_answer(ans: str | None) -> str:
     # first, leaving a stray backslash ("\{1,2\}" -> "1,2\") that fails to match a
     # plainly-braced reference. Set-notation answers (\boxed{\{1,2,3\}}) hit this.
     s = re.sub(r"^\\?\{(.*?)\\?\}$", r"\1", s).strip()
-    # \frac{a}{b} -> a/b. The [dt]? matches the whole textstyle/displaystyle
-    # fraction family — \frac, \dfrac and \tfrac all render the same value, so they
-    # must normalize identically (else \tfrac{3}{4} is a false negative vs \dfrac).
-    s = re.sub(r"\\[dt]?frac\s*\{([^{}]+)\}\s*\{([^{}]+)\}", r"(\1)/(\2)", s)
+    # \frac{a}{b} -> a/b (balanced braces so nested \sqrt{...}/^{\...} operands work).
+    # The [dt]? family — \frac, \dfrac and \tfrac — all render the same value.
+    s = _unwrap_latex_fractions(s)
     s = re.sub(r"\\[dt]?frac\s*(\d)\s*(\d)", r"\1/\2", s)
     # \sqrt{x} -> sqrt(x), and the unbraced single-token \sqrt2 -> sqrt(2). Like the
     # \frac handling just above, the braced and bare forms render the SAME value, so
@@ -606,9 +656,14 @@ def normalize_math_answer(ans: str | None) -> str:
     s = s.replace("π", "pi")
     # The fraction normalizer wraps arbitrary operands, so ``\frac{\pi}{2}``
     # becomes ``(pi)/(2)`` while ``\pi/2`` becomes ``pi/2``. Remove only
-    # standalone atomic operands adjacent to division; this keeps function-call
-    # parentheses such as ``sqrt(2)`` intact without requiring optional sympy.
-    s = re.sub(r"(^|/)\((pi|\d+)\)(?=/|$)", r"\1\2", s)
+    # standalone atomic operands adjacent to division — including a lone
+    # ``sqrt(...)`` call produced from ``\sqrt{...}`` — without eating the
+    # function-call parentheses themselves (``(sqrt(2))`` -> ``sqrt(2)``).
+    s = re.sub(
+        r"(^|/)\((pi|\d+|sqrt\([^()]*\)|[a-z](?:\^\{[^{}]*\}|\^[0-9a-z])?)\)(?=/|$)",
+        r"\1\2",
+        s,
+    )
     s = re.sub(r"\s+", "", s)
     # LaTeX digit grouping "1{,}000" -> "1,000" so the comma-strip below removes it
     # (a boxed answer like \boxed{2{,}048} otherwise never matches "2048").
