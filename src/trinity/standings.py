@@ -117,12 +117,16 @@ def compute_standings(leaderboard: Mapping[str, Any]) -> Standings:
         per_benchmark = h.get("per_benchmark")
         if miner is None or not isinstance(per_benchmark, dict):
             continue
-        best = per_miner.setdefault(str(miner), {})
+        miner_key = str(miner)
         for bench, score in per_benchmark.items():
             if not _is_num(score):
                 continue
             b = str(bench)
             seen_benches.add(b)
+            # Register the miner only once a real numeric score is confirmed. A merged win
+            # whose per_benchmark is empty or all-non-numeric contributes nothing and must
+            # not create a phantom standing (matching the non-dict per_benchmark case).
+            best = per_miner.setdefault(miner_key, {})
             if b not in best or float(score) > best[b]:
                 best[b] = float(score)
 
