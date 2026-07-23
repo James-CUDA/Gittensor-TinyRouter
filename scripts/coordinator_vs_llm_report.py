@@ -6,7 +6,9 @@ LLM-as-coordinator baseline accuracy, and reports the margin per benchmark plus
 the R11 verdict. Zero API cost. SPEC §6 notes the paper's LLM-as-coordinator
 average is 53.76 (Table 8), not the text's 64.14.
 
-Input JSON (``--accuracies``):
+Input JSON (``--accuracies``): per benchmark, TRINITY accuracy (``trinity`` or
+``trained``) and the LLM-as-coordinator accuracy (``llm_as_coordinator``, or the
+aliases ``llm_coordinator`` / ``llm``):
 
     {"livecodebench": {"trinity": 0.615, "llm_coordinator": 0.52},
      "math500":       {"trinity": 0.88,  "llm_coordinator": 0.70},
@@ -30,13 +32,29 @@ sys.path.insert(0, str(_REPO / "src"))
 from trinity.analysis.coordinator_vs_llm import analyze_benchmarks, render  # noqa: E402
 
 
+def _normalize(data: dict[str, Any]) -> dict[str, Any]:
+    """Map each benchmark entry to the keys the analyzer reads (``trinity`` /
+    ``llm_as_coordinator``), accepting the documented ``llm_coordinator`` alias."""
+    out: dict[str, Any] = {}
+    for bench, entry in data.items():
+        if isinstance(entry, dict):
+            trinity = entry.get("trinity", entry.get("trained"))
+            llm = entry.get(
+                "llm_as_coordinator", entry.get("llm_coordinator", entry.get("llm"))
+            )
+            out[bench] = {"trinity": trinity, "llm_as_coordinator": llm}
+        else:
+            out[bench] = entry
+    return out
+
+
 def _load(path: Path) -> dict[str, Any]:
     data = json.loads(path.read_text())
     if not isinstance(data, dict):
         raise ValueError(
             f"{path}: expected an object of benchmark -> {{trinity, llm_coordinator}}"
         )
-    return data
+    return _normalize(data)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -50,12 +68,15 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     accs = _load(args.accuracies)
-    report = analyze_benchmarks(accs, require_all=not args.union)
+    report = analyze_benchmarks(accs)
     if args.json:
         print(json.dumps(report, indent=2))
     else:
-        print(render(accs, require_all=not args.union))
-    return 0 if report["r11_holds"] else 1
+        print(render(accs))
+    # Default: every benchmark must beat the LLM-as-coordinator. ``--union``: hold on
+    # the equal-weight union average instead (a positive union margin).
+    holds = report["union_margin"] > 0.0 if args.union else report["r11_holds"]
+    return 0 if holds else 1
 
 
 if __name__ == "__main__":
