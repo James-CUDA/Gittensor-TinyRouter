@@ -561,7 +561,9 @@ def _verdict(report: dict) -> dict:
     else:
         label = "INCONCLUSIVE"
         msg = ("Headroom CI straddles 0 but upper bound > 0.02: cannot rule routing in "
-               "or out. Widen the reachability level (L1/L2) or collect more samples.")
+               "or out. Collect more samples, or read the ceiling at a wider "
+               "reachability level with scripts/reachability_report.py (ORACLE §6 "
+               "decides at the widest level run).")
     if not reliable:
         msg = ("[K<5: cross-fit oracle was data-starved and floored at best_single; verdict "
                "uses the split-free threshold headroom] ") + msg
@@ -854,8 +856,14 @@ def main() -> None:
                     help="dataset split to collect labels on (use 'train' for warm-start labels)")
     ap.add_argument("--models", default=str(_REPO / "configs" / "models.yaml"))
     ap.add_argument("--k", type=int, default=5, help="samples per (query, model)")
+    # Deliberately still L0-only: collection does not branch on this flag (it is a
+    # label written into the matrix), so offering L1/L2 here would let an
+    # L0-collected matrix be tagged as wider than it is. The *analysis* of several
+    # levels shipped in #417 and is exposed by scripts/reachability_report.py.
     ap.add_argument("--level", default="L0", choices=["L0"],
-                    help="reachability level (L0 single-turn Worker; L1/L2 are future)")
+                    help="reachability level of this collection (single-turn Worker). "
+                         "To read an existing set of per-level matrices, use "
+                         "scripts/reachability_report.py")
     ap.add_argument("--max-items", type=int, default=120, dest="max_items")
     ap.add_argument("--max-tokens", type=int, default=4096, dest="max_tokens")
     ap.add_argument("--reasoning", default="minimal")
