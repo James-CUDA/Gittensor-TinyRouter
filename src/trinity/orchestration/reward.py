@@ -1062,7 +1062,9 @@ def _strip_choice_font_wrappers(text: str) -> str:
 # sides of a single ``A-J``, and the ``(?<![\w*])`` / ``(?![\w*])`` guards keep it from
 # touching ``snake_case`` identifiers (``MAX_A_VAL``) or longer marker runs, so any text
 # that is not exactly ``<marker>LETTER<marker>`` is left byte-identical.
-_CHOICE_MD_EMPHASIS_RE = re.compile(r"(?<![\w*])(\*\*|\*|__|_|`)([A-Ja-j])\1(?![\w*])")
+_CHOICE_MD_EMPHASIS_RE = re.compile(
+    r"(?<![\w*])(\*\*\*|\*\*|\*|__|_|`)([A-Ja-j])\1(?![\w*])"
+)
 
 
 def _strip_choice_md_emphasis(text: str) -> str:
@@ -1117,6 +1119,10 @@ _COMMITTED_ANSWER_PATTERNS: tuple[re.Pattern[str], ...] = (
 # last match, in priority order, only when no committed-answer pattern matched.
 _FALLBACK_CHOICE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\boption\s*\(?\s*([A-J])(?![A-Za-z])", re.I),
+    # Bracketed letters (``[B]``) — common MMLU/GPQA final-answer spelling (#491).
+    re.compile(r"\[\s*([A-J])\s*\]", re.I),
+    # Chinese "answer" cue (fullwidth or ASCII colon).
+    re.compile(r"答案\s*[：:]\s*([A-J])(?![A-Za-z])", re.I),
     re.compile(r"^\s*\(?\s*([A-J])\s*[\).:]", re.M),
 )
 # Kept for anything that referenced the combined set (order = priority).
