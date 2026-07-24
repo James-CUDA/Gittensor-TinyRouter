@@ -502,6 +502,8 @@ def extract_last_number(text: str) -> str | None:
     # comma so the thousands-separator branch below reads it as one number instead
     # of splitting it into "1" and "000".
     text = text.replace("{,}", ",")
+    # Ideographic / fullwidth thousands comma (U+FF0C) → ASCII (issue #500).
+    text = text.replace("，", ",")
     candidates: list[tuple[int, str]] = []
     for _start, end, term in _iter_latex_frac_sqrt_spans(text):
         candidates.append((end, term))
@@ -870,6 +872,7 @@ def normalize_math_answer(ans: str | None) -> str:
     # LaTeX digit grouping "1{,}000" -> "1,000" so the comma-strip below removes it
     # (a boxed answer like \boxed{2{,}048} otherwise never matches "2048").
     s = s.replace("{,}", ",")
+    s = s.replace("，", ",")
 
     # Strip digit-grouping commas ("2,000" -> "2000", "1,000,000" -> "1000000") so
     # a thousands-separated answer is not a false negative. Skip when the answer
