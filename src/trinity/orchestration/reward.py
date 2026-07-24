@@ -498,6 +498,10 @@ def extract_last_number(text: str) -> str | None:
     """
     if not text:
         return None
+    # Fold Unicode minus (U+2212) to ASCII hyphen so signed literals match the
+    # extract patterns and do not lose their sign (issue #460). En/em dashes
+    # are left alone — only U+2212 is unambiguously a minus.
+    text = text.replace("−", "-")
     # LaTeX digit grouping: "1{,}000" renders as "1,000". Normalize it to a bare
     # comma so the thousands-separator branch below reads it as one number instead
     # of splitting it into "1" and "000".
@@ -751,6 +755,9 @@ def normalize_math_answer(ans: str | None) -> str:
     if ans is None:
         return ""
     s = str(ans).strip()
+    # Unicode minus (U+2212) → ASCII hyphen, same class of glyph fold as π→pi
+    # (issue #460). Do not fold en/em dashes.
+    s = s.replace("−", "-")
     # Detect set/tuple/list shape before delimiters are stripped — otherwise
     # ``(5, 120)`` loses its parens and ``{2, 100}`` loses its braces before the
     # thousands-comma guard can see them (issue #296).
