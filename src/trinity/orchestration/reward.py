@@ -502,9 +502,12 @@ def extract_last_number(text: str) -> str | None:
     # comma so the thousands-separator branch below reads it as one number instead
     # of splitting it into "1" and "000".
     text = text.replace("{,}", ",")
-    candidates: list[tuple[int, str]] = []
-    for _start, end, term in _iter_latex_frac_sqrt_spans(text):
-        candidates.append((end, term))
+    # (start, end, term) so a relational prefix immediately before the winning
+    # span can be attached — otherwise ``\neq 5`` extracts as ``"5"`` and falsely
+    # matches a bare gold ``5`` (issue #479).
+    candidates: list[tuple[int, int, str]] = []
+    for start, end, term in _iter_latex_frac_sqrt_spans(text):
+        candidates.append((start, end, term))
     # Match a simple fraction a/b FIRST (so "1/2" is kept whole, not read as "2"),
     # then decimals/integers like -1,234.56 or 42 or .5 ; require a digit somewhere.
     brace = r"\{(?:[^{}]|\{[^{}]*\})*\}"
@@ -518,11 +521,22 @@ def extract_last_number(text: str) -> str | None:
         r"|-?\.\d+"
     )
     for m in pattern.finditer(text):
-        candidates.append((m.end(), m.group(0).replace(",", "").replace(" ", "")))
+        candidates.append(
+            (m.start(), m.end(), m.group(0).replace(",", "").replace(" ", ""))
+        )
     if not candidates:
         return None
-    candidates.sort(key=lambda item: item[0])
-    return candidates[-1][1]
+    candidates.sort(key=lambda item: item[1])
+    start, end, term = candidates[-1]
+    # If a relation operator sits immediately before this span, keep it so the
+    # extracted answer is ``\neq5`` / ``≤5`` rather than a bare magnitude.
+    rel = re.search(
+        r"(?:\\(?:neq|ne|leq|le|geq|ge|lt|gt)|[≠≤≥<>])\s*$",
+        text[:start],
+    )
+    if rel is not None:
+        term = text[rel.start() : end].replace(",", "").replace(" ", "")
+    return term
 
 
 def _is_thousands_grouped_number(s: str) -> bool:
