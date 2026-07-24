@@ -847,8 +847,13 @@ def normalize_math_answer(ans: str | None) -> str:
     # standalone atomic operands adjacent to division — including a lone
     # ``sqrt(...)`` call produced from ``\sqrt{...}`` — without eating the
     # function-call parentheses themselves (``(sqrt(2))`` -> ``sqrt(2)``).
+    # Include #434's ``base^(...)`` spelling: the strip runs *after*
+    # ``_normalize_braced_exponents``, so ``x^{2}`` / ``2^{10}`` already look
+    # like ``x^(2)`` / ``2^(10)``. Without that branch, ``\frac{x^{2}}{2}``
+    # stays ``(x^(2))/2`` while the slash form is ``x^(2)/2`` (exact-match
+    # false negative; only sympy saves it).
     s = re.sub(
-        r"(^|/)\((pi|\d+|sqrt\([^()]*\)|[a-z](?:\^\{[^{}]*\}|\^[0-9a-z])?)\)(?=/|$)",
+        r"(^|/)\((pi|\d+|sqrt\([^()]*\)|(?:\d+|[a-z])(?:\^\([^()]*\)|\^\{[^{}]*\}|\^[0-9a-z])?)\)(?=/|$)",
         r"\1\2",
         s,
     )

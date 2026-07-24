@@ -18,5 +18,9 @@ def test_plain_frac_still_matches():
 
 def test_frac_with_superscript_operand():
     # Braced superscript in the numerator is the same [^{}]+ failure mode.
+    # Exact normalize must agree — do not rely on the sympy fallback.
     assert "\\frac" not in normalize_math_answer(r"\frac{x^{2}}{2}")
+    assert normalize_math_answer(r"\frac{x^{2}}{2}") == normalize_math_answer(r"x^{2}/2")
     assert math_equal(r"\frac{x^{2}}{2}", r"x^{2}/2")
+    assert normalize_math_answer(r"\frac{2^{10}}{2}") == normalize_math_answer(r"2^{10}/2")
+    assert math_equal(r"\frac{2^{10}}{2}", r"2^{10}/2")
