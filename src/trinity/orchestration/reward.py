@@ -478,6 +478,33 @@ def _iter_latex_frac_sqrt_spans(text: str) -> list[tuple[int, int, str]]:
     return spans
 
 
+
+#: Unicode dashes that models use as a minus sign. U+2212 is unambiguous;
+#: en/em dashes are only folded in *unary* position (see
+#: :func:`_fold_unary_unicode_dashes`) so year ranges like ``1994–1995`` keep
+#: their separator and do not extract as signed ``-1995``.
+_UNICODE_MINUS_DASHES = ("−", "–", "—")  # U+2212, U+2013, U+2014
+
+
+def _fold_unary_unicode_dashes(text: str) -> str:
+    """Map unary Unicode dashes to ASCII ``-``; leave digit–digit ranges alone.
+
+    ``"answer is –3"`` must extract as ``"-3"`` (issue #473). ``"1994–1995"``
+    must still yield unsigned ``"1995"`` — folding the interior en dash would
+    make the signed-number regex read ``-1995``.
+    """
+    out: list[str] = []
+    for i, ch in enumerate(text):
+        if ch in _UNICODE_MINUS_DASHES:
+            prev = text[i - 1] if i else ""
+            nxt = text[i + 1] if i + 1 < len(text) else ""
+            if (nxt.isdigit() or nxt == ".") and not prev.isdigit():
+                out.append("-")
+                continue
+        out.append(ch)
+    return "".join(out)
+
+
 def extract_last_number(text: str) -> str | None:
     """Extract the last numeric literal (or LaTeX ``\\frac``/``\\sqrt`` term) from ``text``.
 
@@ -498,6 +525,8 @@ def extract_last_number(text: str) -> str | None:
     """
     if not text:
         return None
+    # Unary Unicode dashes → ASCII minus (issue #473 / sibling of #460).
+    text = _fold_unary_unicode_dashes(text)
     # LaTeX digit grouping: "1{,}000" renders as "1,000". Normalize it to a bare
     # comma so the thousands-separator branch below reads it as one number instead
     # of splitting it into "1" and "000".
@@ -751,6 +780,8 @@ def normalize_math_answer(ans: str | None) -> str:
     if ans is None:
         return ""
     s = str(ans).strip()
+    # Unary Unicode dashes → ASCII minus before any further normalize (issue #473).
+    s = _fold_unary_unicode_dashes(s)
     # Detect set/tuple/list shape before delimiters are stripped — otherwise
     # ``(5, 120)`` loses its parens and ``{2, 100}`` loses its braces before the
     # thousands-comma guard can see them (issue #296).
