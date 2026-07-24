@@ -505,6 +505,14 @@ def extract_last_number(text: str) -> str | None:
     candidates: list[tuple[int, str]] = []
     for _start, end, term in _iter_latex_frac_sqrt_spans(text):
         candidates.append((end, term))
+    # Binomial coefficients: whole ``\binom{n}{k}`` / ``{n \choose k}`` so the
+    # lower index digit is not taken alone (issue #489).
+    for m in re.finditer(
+        r"\\binom(?![a-zA-Z])\s*\{[^{}]*\}\s*\{[^{}]*\}"
+        r"|\{[^{}]*\\choose\s*[^{}]*\}",
+        text,
+    ):
+        candidates.append((m.end(), m.group(0)))
     # Match a simple fraction a/b FIRST (so "1/2" is kept whole, not read as "2"),
     # then decimals/integers like -1,234.56 or 42 or .5 ; require a digit somewhere.
     brace = r"\{(?:[^{}]|\{[^{}]*\})*\}"
@@ -521,7 +529,9 @@ def extract_last_number(text: str) -> str | None:
         candidates.append((m.end(), m.group(0).replace(",", "").replace(" ", "")))
     if not candidates:
         return None
-    candidates.sort(key=lambda item: item[0])
+    # Latest end wins; on a tie prefer the longer span so ``\binom{5}{2}`` beats
+    # the trailing index digit that ends at the same index (issue #489).
+    candidates.sort(key=lambda item: (item[0], len(item[1])))
     return candidates[-1][1]
 
 
@@ -820,6 +830,16 @@ def normalize_math_answer(ans: str | None) -> str:
     # The [dt]? family — \frac, \dfrac and \tfrac — all render the same value.
     s = _unwrap_latex_fractions(s)
     s = re.sub(r"\\[dt]?frac\s*(\d)\s*(\d)", r"\1/\2", s)
+    # Binomial coefficients → sympy ``binomial(n,k)`` so ``\binom{5}{2}`` equals
+    # gold ``10`` (issue #489). Also TeX ``{n \choose k}`` / bare ``n \choose k``
+    # (outer-brace peel may remove the wrapping ``{...}`` before we get here).
+    s = re.sub(
+        r"\\binom(?![a-zA-Z])\s*\{([^{}]*)\}\s*\{([^{}]*)\}",
+        r"binomial(\1,\2)",
+        s,
+    )
+    s = re.sub(r"\{([^{}]*)\\choose\s*([^{}]*)\}", r"binomial(\1,\2)", s)
+    s = re.sub(r"(-?\d+)\s*\\choose\s*(-?\d+)", r"binomial(\1,\2)", s)
     # \sqrt{x} -> sqrt(x), and the unbraced single-token \sqrt2 -> sqrt(2). Like the
     # \frac handling just above, the braced and bare forms render the SAME value, so
     # they must normalize identically (else \sqrt{2} is a false negative against a
