@@ -505,6 +505,10 @@ def extract_last_number(text: str) -> str | None:
     candidates: list[tuple[int, str]] = []
     for _start, end, term in _iter_latex_frac_sqrt_spans(text):
         candidates.append((end, term))
+    # Classic TeX ``a\over b`` / ``{a\over b}`` — treat as one fraction term so the
+    # denominator digit is not taken alone (issue #484).
+    for m in re.finditer(r"\{[^{}]+\\over\s*[^{}]+\}|-?\d+\s*\\over\s*-?\d+", text):
+        candidates.append((m.end(), m.group(0)))
     # Match a simple fraction a/b FIRST (so "1/2" is kept whole, not read as "2"),
     # then decimals/integers like -1,234.56 or 42 or .5 ; require a digit somewhere.
     brace = r"\{(?:[^{}]|\{[^{}]*\})*\}"
@@ -521,7 +525,9 @@ def extract_last_number(text: str) -> str | None:
         candidates.append((m.end(), m.group(0).replace(",", "").replace(" ", "")))
     if not candidates:
         return None
-    candidates.sort(key=lambda item: item[0])
+    # Latest end wins; on a tie prefer the longer span so ``1\over 2`` beats the
+    # trailing digit ``2`` that ends at the same index (issue #484).
+    candidates.sort(key=lambda item: (item[0], len(item[1])))
     return candidates[-1][1]
 
 
@@ -820,6 +826,10 @@ def normalize_math_answer(ans: str | None) -> str:
     # The [dt]? family — \frac, \dfrac and \tfrac — all render the same value.
     s = _unwrap_latex_fractions(s)
     s = re.sub(r"\\[dt]?frac\s*(\d)\s*(\d)", r"\1/\2", s)
+    # Classic TeX ``\over`` fractions (``{1\over 2}``, ``1\over 2``) → slash form so
+    # they grade equal to ``1/2`` / ``\frac{1}{2}`` (issue #484).
+    s = re.sub(r"\{([^{}]+)\\over\s*([^{}]+)\}", r"(\1)/(\2)", s)
+    s = re.sub(r"(-?\d+(?:\.\d+)?)\\over\s*(-?\d+(?:\.\d+)?)", r"\1/\2", s)
     # \sqrt{x} -> sqrt(x), and the unbraced single-token \sqrt2 -> sqrt(2). Like the
     # \frac handling just above, the braced and bare forms render the SAME value, so
     # they must normalize identically (else \sqrt{2} is a false negative against a
