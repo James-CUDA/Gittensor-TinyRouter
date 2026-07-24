@@ -502,6 +502,15 @@ def extract_last_number(text: str) -> str | None:
     # comma so the thousands-separator branch below reads it as one number instead
     # of splitting it into "1" and "000".
     text = text.replace("{,}", ",")
+    # Thin-space thousands (``1\\,000`` / ``1\\:000`` / ``1\\;000``): collapse
+    # before the literal regex so the last match is the full number, not the
+    # trailing ``000`` group alone (issue #478). Boxed answers already work
+    # because ``normalize_math_answer`` strips ``\\,`` globally.
+    while True:
+        nxt = re.sub(r"(\d)\\[,;:](\d)", r"\1\2", text)
+        if nxt == text:
+            break
+        text = nxt
     candidates: list[tuple[int, str]] = []
     for _start, end, term in _iter_latex_frac_sqrt_spans(text):
         candidates.append((end, term))
