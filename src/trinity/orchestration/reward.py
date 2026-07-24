@@ -505,6 +505,10 @@ def extract_last_number(text: str) -> str | None:
     candidates: list[tuple[int, str]] = []
     for _start, end, term in _iter_latex_frac_sqrt_spans(text):
         candidates.append((end, term))
+    # Absolute-value bars ``|-3|`` as one term so the signed interior is not
+    # taken alone (issue #490).
+    for m in re.finditer(r"\|[^|]+\|", text):
+        candidates.append((m.end(), m.group(0)))
     # Match a simple fraction a/b FIRST (so "1/2" is kept whole, not read as "2"),
     # then decimals/integers like -1,234.56 or 42 or .5 ; require a digit somewhere.
     brace = r"\{(?:[^{}]|\{[^{}]*\})*\}"
@@ -521,7 +525,9 @@ def extract_last_number(text: str) -> str | None:
         candidates.append((m.end(), m.group(0).replace(",", "").replace(" ", "")))
     if not candidates:
         return None
-    candidates.sort(key=lambda item: item[0])
+    # Latest end wins; on a tie prefer the longer span so ``|-3|`` beats the
+    # interior ``-3`` that ends at the same index (issue #490).
+    candidates.sort(key=lambda item: (item[0], len(item[1])))
     return candidates[-1][1]
 
 
@@ -820,6 +826,9 @@ def normalize_math_answer(ans: str | None) -> str:
     # The [dt]? family — \frac, \dfrac and \tfrac — all render the same value.
     s = _unwrap_latex_fractions(s)
     s = re.sub(r"\\[dt]?frac\s*(\d)\s*(\d)", r"\1/\2", s)
+    # Absolute-value bars ``|x|`` → ``abs(x)`` so ``|-3|`` equals gold ``3``
+    # (issue #490). Single-level only — nested ``||·||`` norms are left alone.
+    s = re.sub(r"\|([^|]+)\|", r"abs(\1)", s)
     # \sqrt{x} -> sqrt(x), and the unbraced single-token \sqrt2 -> sqrt(2). Like the
     # \frac handling just above, the braced and bare forms render the SAME value, so
     # they must normalize identically (else \sqrt{2} is a false negative against a
