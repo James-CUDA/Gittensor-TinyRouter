@@ -165,21 +165,43 @@ def _final_answer_segment(text: str) -> str:
 #: compared as a sequence, not treated as strippable formatting noise.
 _BRACKETS = frozenset("()[]{}<>")
 
+#: Whole-answer Markdown emphasis (``**True**``, ``*valid*``, ``__no__``). Same marker
+#: on both sides (backreference) so asymmetric ``*`` content is never peeled. Mirrors
+#: ``reward._strip_choice_md_emphasis`` used by BBH multiple-choice (#461).
+_MD_EMPHASIS_WRAP_RE = re.compile(r"(\*{1,3}|_{1,3}|`)(.+?)\1", re.DOTALL)
+
+
+def _strip_md_emphasis_wrap(s: str) -> str:
+    """Peel Markdown emphasis that wraps the entire stripped answer (fixpoint)."""
+    prev = None
+    while prev != s:
+        prev = s
+        m = _MD_EMPHASIS_WRAP_RE.fullmatch(s.strip())
+        if m:
+            s = m.group(2).strip()
+    return s
+
 
 def _normalize_exact(text: str) -> str:
     """Normalise a free-form answer for tolerant exact comparison.
 
-    Lower-cases, strips surrounding quotes/brackets/terminal punctuation, and collapses
-    internal whitespace — only formatting noise, never content. A **pure bracket sequence**
-    is the exception: the ``dyck_languages`` gold target is all closing brackets (e.g.
-    ``"] )"``), so it is compared whitespace-insensitively rather than stripped down to an
-    empty string — which made every dyck answer, correct or not, grade ``0.0``.
+    Lower-cases, strips surrounding quotes/brackets/terminal punctuation and Markdown
+    emphasis (``**True**`` == ``True``), and collapses internal whitespace — only
+    formatting noise, never content. A **pure bracket sequence** is the exception: the
+    ``dyck_languages`` gold target is all closing brackets (e.g. ``"] )"``), so it is
+    compared whitespace-insensitively rather than stripped down to an empty string —
+    which made every dyck answer, correct or not, grade ``0.0``.
     """
     s = str(text).strip().lower()
+    # Peel whole-answer emphasis BEFORE the bracket check so a bolded dyck answer
+    # still reaches the bracket-sequence comparison.
+    s = _strip_md_emphasis_wrap(s)
     compact = re.sub(r"\s+", "", s)
     if compact and all(ch in _BRACKETS for ch in compact):
         return compact
     s = s.strip(".\"'`()[]{} \t\n")
+    # Emphasis may sit inside terminal punctuation ("**true**."): strip then peel.
+    s = _strip_md_emphasis_wrap(s)
     s = re.sub(r"\s+", " ", s)
     return s
 
