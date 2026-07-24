@@ -842,6 +842,23 @@ def normalize_math_answer(ans: str | None) -> str:
     # (the product symbol) is intentionally left untouched.
     s = re.sub(r"\\pi(?![a-zA-Z])", "pi", s)
     s = s.replace("π", "pi")
+    # Common Greek letters: LaTeX command and Unicode glyph → same ascii token
+    # (same contract as pi; issue #498).
+    for latex, uni, tok in (
+        ("alpha", "α", "alpha"),
+        ("beta", "β", "beta"),
+        ("gamma", "γ", "gamma"),
+        ("delta", "δ", "delta"),
+        ("theta", "θ", "theta"),
+        ("lambda", "λ", "lambda"),
+        ("mu", "μ", "mu"),
+        ("sigma", "σ", "sigma"),
+        ("phi", "φ", "phi"),
+        ("varphi", "ϕ", "phi"),
+        ("omega", "ω", "omega"),
+    ):
+        s = __import__("re").sub(rf"\\{latex}(?![a-zA-Z])", tok, s)
+        s = s.replace(uni, tok)
     # The fraction normalizer wraps arbitrary operands, so ``\frac{\pi}{2}``
     # becomes ``(pi)/(2)`` while ``\pi/2`` becomes ``pi/2``. Remove only
     # standalone atomic operands adjacent to division — including a lone
