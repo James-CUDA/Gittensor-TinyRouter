@@ -102,7 +102,7 @@ def analyze_benchmarks(pairs: Mapping[str, Any], *, tol: float = _TOL) -> dict[s
     Args:
         pairs: ``{benchmark: (trained, llm_as_coordinator)}`` — each value a 2-tuple/
             list, or a mapping with keys ``trained`` / ``llm_as_coordinator`` (aliases
-            ``trinity`` / ``llm``).
+            ``trinity`` / ``llm`` / ``llm_coordinator``).
         tol: Win tolerance (see :func:`analyze_pair`).
 
     Returns:
@@ -135,7 +135,9 @@ def _split(value: Any) -> tuple[Any, Any]:
     """Coerce a pair value to ``(trained, llm_as_coordinator)``."""
     if isinstance(value, Mapping):
         trained = value.get("trained", value.get("trinity"))
-        llm = value.get("llm_as_coordinator", value.get("llm"))
+        llm = value.get(
+            "llm_as_coordinator", value.get("llm_coordinator", value.get("llm"))
+        )
         return trained, llm
     try:
         trained, llm = value
