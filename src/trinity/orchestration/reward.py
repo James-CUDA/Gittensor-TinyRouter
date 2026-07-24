@@ -514,6 +514,8 @@ def extract_last_number(text: str) -> str | None:
         r"|-?\d+\s*/\s*-?\d+"
         # Scientific notation BEFORE bare decimals so "1e3" is not read as "3".
         r"|-?(?:\d+(?:\.\d+)?|\.\d+)[eE][+-]?\d+"
+        # Integer powers ``10^{3}`` / ``10^3`` BEFORE bare digits (issue #499).
+        rf"|-?(?:\d+(?:\.\d+)?)\s*\^(?:{brace}|[+-]?\d+)"
         r"|-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
         r"|-?\.\d+"
     )
@@ -521,7 +523,8 @@ def extract_last_number(text: str) -> str | None:
         candidates.append((m.end(), m.group(0).replace(",", "").replace(" ", "")))
     if not candidates:
         return None
-    candidates.sort(key=lambda item: item[0])
+    # Latest end wins; on a tie prefer the longer span so ``10^{3}`` beats ``3``.
+    candidates.sort(key=lambda item: (item[0], len(item[1])))
     return candidates[-1][1]
 
 
