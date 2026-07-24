@@ -607,7 +607,7 @@ def _unwrap_font_commands(s: str) -> str:
     return s
 
 
-_FRACTION_CMDS = ("dfrac", "tfrac", "frac")
+_FRACTION_CMDS = ("dfrac", "tfrac", "cfrac", "frac")
 
 
 def _scan_brace_group(s: str, start: int) -> tuple[str, int] | None:
