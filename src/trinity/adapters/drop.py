@@ -130,9 +130,12 @@ def _final_answer_segment(text: str) -> str:
     return boxed if boxed is not None else ""
 
 
-#: Surrounding punctuation stripped from a token, EXCLUDING the signs ``+``/``-`` — a
-#: leading sign is part of a number's value, not wrapping noise.
-_STRIP_EDGE = "".join(c for c in string.punctuation if c not in "+-")
+#: Surrounding punctuation stripped from a token, EXCLUDING the signs ``+``/``-`` and
+#: the decimal point ``.`` — a leading sign or decimal point is part of a number's
+#: value, not wrapping noise. A genuinely-trailing ``.`` (sentence period) is handled
+#: by the dedicated rstrip retry in :func:`_normalize_token`, which can tell it apart
+#: from a value-bearing leading point; a blanket edge-strip cannot.
+_STRIP_EDGE = "".join(c for c in string.punctuation if c not in "+-.")
 
 
 def _normalize_token(raw: str) -> str:
@@ -147,20 +150,27 @@ def _normalize_token(raw: str) -> str:
     dropped the ``-`` and left commas to break ``float()``) did not deliver.
 
     A token that is ALREADY a number is recognised before any punctuation is
-    stripped: the edge-strip set includes ``.``, so a leading-decimal token like
-    ``".5"`` would otherwise lose its point and normalize to ``"5.0"`` — equal to
-    a gold ``"5"`` (false positive) and unequal to the value-identical gold
-    ``"0.5"`` (false negative). The official DROP ``_remove_punc`` tests
-    ``_is_number`` first and leaves numbers untouched for exactly this reason."""
+    stripped: a leading-decimal token like ``".5"`` must not lose its point and
+    normalize to ``"5.0"`` — equal to a gold ``"5"`` (false positive) and unequal
+    to the value-identical gold ``"0.5"`` (false negative). The official DROP
+    ``_remove_punc`` tests ``_is_number`` first and leaves numbers untouched for
+    exactly this reason (issue #423). The float-first path alone only covers the
+    *bare* token: with ``.`` in the edge-strip set, wrapped forms like ``"$.5"``
+    and ``".5."`` still lost the leading point on the second-chance path. So the
+    edge strip excludes ``.`` entirely, and a genuinely-trailing period (``".5."``,
+    ``"16.."``) is retried with an explicit ``rstrip(".")`` — right-side dots are
+    sentence punctuation, left-side dots are value."""
     try:
         return str(float(raw.replace(",", "")))
     except ValueError:
         pass
     core = raw.strip(_STRIP_EDGE)
-    try:
-        return str(float(core.replace(",", "")))
-    except ValueError:
-        return _PUNCT.sub("", raw)
+    for cand in (core, core.rstrip(".")):
+        try:
+            return str(float(cand.replace(",", "")))
+        except ValueError:
+            continue
+    return _PUNCT.sub("", raw)
 
 
 def _split_internal_hyphens(token: str) -> list[str]:
