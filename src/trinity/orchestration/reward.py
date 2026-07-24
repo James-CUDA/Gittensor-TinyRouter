@@ -514,6 +514,9 @@ def extract_last_number(text: str) -> str | None:
         r"|-?\d+\s*/\s*-?\d+"
         # Scientific notation BEFORE bare decimals so "1e3" is not read as "3".
         r"|-?(?:\d+(?:\.\d+)?|\.\d+)[eE][+-]?\d+"
+        # LaTeX scientific ``a\times 10^{b}`` BEFORE bare digits so the exponent
+        # is not taken alone (issue #485). Sibling of the ``1e3`` form above.
+        rf"|-?(?:\d+(?:\.\d+)?|\.\d+)\s*\\times\s*10\s*\^(?:{brace}|[+-]?\d+)"
         r"|-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
         r"|-?\.\d+"
     )
@@ -521,7 +524,9 @@ def extract_last_number(text: str) -> str | None:
         candidates.append((m.end(), m.group(0).replace(",", "").replace(" ", "")))
     if not candidates:
         return None
-    candidates.sort(key=lambda item: item[0])
+    # Latest end wins; on a tie prefer the longer span so ``3\times 10^{2}`` beats
+    # the trailing exponent digit that ends at the same index (issue #485).
+    candidates.sort(key=lambda item: (item[0], len(item[1])))
     return candidates[-1][1]
 
 
