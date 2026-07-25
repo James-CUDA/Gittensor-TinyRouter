@@ -156,11 +156,32 @@ def _normalize_token(raw: str) -> str:
         return str(float(raw.replace(",", "")))
     except ValueError:
         pass
-    core = raw.strip(_STRIP_EDGE)
+    core = _strip_edges_keeping_leading_decimal(raw)
     try:
         return str(float(core.replace(",", "")))
     except ValueError:
         return _PUNCT.sub("", raw)
+
+
+def _strip_edges_keeping_leading_decimal(raw: str) -> str:
+    """Strip edge punctuation like raw.strip(_STRIP_EDGE), except that a .
+    starting a leading-decimal number (. directly followed by a digit) is kept.
+
+    A plain strip treats the . of ".5." or "$.5" as wrapping noise and
+    yields "5", so the token normalizes to "5.0" — equal to a gold "5"
+    (false positive) and unequal to the value-identical "0.5" (false negative).
+    The official DROP normalizer never corrupts a number this way, so the left-edge
+    scan stops as soon as stripping one more character would break a leading decimal.
+    """
+    end = len(raw)
+    while end > 0 and raw[end - 1] in _STRIP_EDGE:
+        end -= 1
+    start = 0
+    while start < end and raw[start] in _STRIP_EDGE:
+        if raw[start] == "." and start + 1 < end and raw[start + 1].isdigit():
+            break
+        start += 1
+    return raw[start:end]
 
 
 def _split_internal_hyphens(token: str) -> list[str]:
