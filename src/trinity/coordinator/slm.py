@@ -192,6 +192,39 @@ class CoordinatorEncoder:
     # ------------------------------------------------------------------ #
     # public API
     # ------------------------------------------------------------------ #
+    def _forward_hidden_states(self, transcript_text: str):
+        """Shared forward: tokenize + EOS, return final-layer states ``(1, L, d)``.
+
+        Sequence layout matches SPEC §3.2::
+
+            [ transcript + HEAD_INPUT_SUFFIX ] + [ EOS ]
+        """
+        torch = self._torch
+        enc = self.tokenizer(
+            transcript_text + HEAD_INPUT_SUFFIX,
+            return_tensors="pt",
+            add_special_tokens=False,
+        )
+        input_ids = enc["input_ids"]
+        eos = torch.tensor([[self._eos_id]], dtype=input_ids.dtype)
+        input_ids = torch.cat([input_ids, eos], dim=1)
+        attention_mask = torch.ones_like(input_ids)
+        if input_ids.shape[1] < 2:
+            raise ValueError(
+                "Need at least 2 tokens (content + EOS) for a penultimate "
+                f"position; got sequence length {input_ids.shape[1]}."
+            )
+        input_ids = input_ids.to(self.device)
+        attention_mask = attention_mask.to(self.device)
+        with torch.no_grad():
+            out = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_hidden_states=True,
+                use_cache=False,
+            )
+        return out.hidden_states[-1]  # (1, L, d_h)
+
     def encode(self, transcript_text: str) -> np.ndarray:
         """Return the ``<Head Input>``-position hidden state for ``transcript_text``.
 
@@ -218,43 +251,9 @@ class CoordinatorEncoder:
             iff ``self.l2_normalize`` is set. Deterministic across calls.
         """
         torch = self._torch
-
-        # Tokenize WITHOUT auto special tokens so we control the sequence layout:
-        # [ transcript ... <Head Input> ] + [ EOS ]. The suffix's final token
-        # therefore sits at index -2, which is the position the head reads.
-        enc = self.tokenizer(
-            transcript_text + HEAD_INPUT_SUFFIX,
-            return_tensors="pt",
-            add_special_tokens=False,
-        )
-        input_ids = enc["input_ids"]
-        eos = torch.tensor([[self._eos_id]], dtype=input_ids.dtype)
-        input_ids = torch.cat([input_ids, eos], dim=1)
-
-        attention_mask = torch.ones_like(input_ids)
-        if input_ids.shape[1] < 2:
-            raise ValueError(
-                "Need at least 2 tokens (content + EOS) for a penultimate "
-                f"position; got sequence length {input_ids.shape[1]}."
-            )
-
-        input_ids = input_ids.to(self.device)
-        attention_mask = attention_mask.to(self.device)
-
-        with torch.no_grad():
-            out = self.model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                output_hidden_states=True,
-                use_cache=False,
-            )
-
-        # hidden_states is a tuple of (num_layers + 1) tensors, each
-        # (batch, seq_len, hidden_size); [-1] is the final layer. Index -2 along
-        # the sequence is the penultimate (NOT EOS) output token -- the default,
-        # and what SPEC §3.2 specifies.
-        h = out.hidden_states[-1][0, self.token_index, :]
-        h = h.to(torch.float32)
+        Hs = self._forward_hidden_states(transcript_text)
+        # Index -2 along the sequence is the penultimate (NOT EOS) output token.
+        h = Hs[0, self.token_index, :].to(torch.float32)
 
         if self.l2_normalize:
             norm = torch.linalg.vector_norm(h)
@@ -262,6 +261,41 @@ class CoordinatorEncoder:
             h = h / norm if float(norm) > 0.0 else h
 
         return h.detach().cpu().numpy().astype(np.float32, copy=False)
+
+    def encode_sequence(
+        self,
+        transcript_text: str,
+        *,
+        drop_eos: bool = True,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return full final-layer token states for attention pooling.
+
+        Optional path for ``encode → AttentivePool → head`` (M1 / ablations).
+        Does **not** replace :meth:`encode` (paper penultimate-token path).
+
+        Parameters
+        ----------
+        transcript_text:
+            Transcript to encode (same formatting as :meth:`encode`).
+        drop_eos:
+            If True (default), omit the trailing EOS column so pooling runs over
+            content + ``HEAD_INPUT_SUFFIX`` only.
+
+        Returns
+        -------
+        H:
+            float32 array ``(K, d_h)`` — per-token final-layer states
+            (not L2-normalized; normalize after pooling).
+        mask:
+            bool array ``(K,)`` of True (all positions kept; no padding here).
+        """
+        Hs = self._forward_hidden_states(transcript_text)  # (1, L, d)
+        H = Hs[0].to(self._torch.float32)
+        if drop_eos:
+            H = H[:-1]
+        H_np = H.detach().cpu().numpy().astype(np.float32, copy=False)
+        mask = np.ones(H_np.shape[0], dtype=bool)
+        return H_np, mask
 
     @classmethod
     def from_config(

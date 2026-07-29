@@ -38,6 +38,11 @@ experiments/**/cache/
 # Exception: submission .npy files ARE committed (they are the competition artifacts)
 !submissions/**/*.npy
 *.npy
+# M1 rate-limit ledger + local smoke packs (not real miner submissions)
+submissions/m1_attempts.jsonl
+submissions/m1_leaderboard_*.json
+submissions/demo/
+
 wandb/
 data/
 datasets/

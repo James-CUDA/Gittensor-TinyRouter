@@ -18,6 +18,173 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-07-29 — prune M1 clutter before commit  #decision
+**Context:** Clean unnecessary artifacts from the M1 worktree.
+**Actual:** Removed `submissions/demo/` (zero-weight smoke pack). Moved one-shot
+Hub builders (`build_router_bench*`, `reorganize_*`, `expand_milestone1_hub`,
+`split_three_milestones`) to `scripts/legacy/`. Kept `build_tinyrouter_m1_slim.py`
++ M1 pack/eval/validate as the live path. Gitignore demo + m1 leaderboard/attempts.
+**Follow-up:** Commit M1 product surface only.
+
+## 2026-07-29 — M1 validator: king vs challenger, merge on margin  #decision
+**Context:** User wants validator to pick data, score king + challenger; PR merges
+only if challenger beats king.
+**Actual:** `scripts/validate_milestone1.py` + `trinity.m1.leaderboard` /
+`scoring.compare_report`. Same test split for both; `WIN_MARGIN=0.02`;
+`--promote` updates `submissions/m1_leaderboard_<config>.json`. No king → first
+valid challenger becomes king.
+**Follow-up:** Wire to GitHub Action on M1 submission PRs.
+
+## 2026-07-29 — M1 workflow: head-only submit, <1M params, 1/day  #decision
+**Context:** User: default TriageHead is just the default TinyRouter head; miners
+design/train their head, submit head+weights only; host evaluates. Constraints:
+size < 1M params, one submit per day.
+**Actual:** `docs/MILESTONE1.md`; `trinity.m1.gates` (param_budget, rate_limit,
+weight_sanity); `scripts/preflight_milestone1.py`; eval `--record-attempt` logs
+`submissions/m1_attempts.jsonl`. `MAX_HEAD_PARAMS=1_000_000`.
+**Follow-up:** Optional custom arch beyond TriageHead I/O; public M1 leaderboard.
+
+## 2026-07-29 — Milestone-1 eval harness  #decision #repro
+**Context:** User asked how to evaluate miners on M1 (not pr_eval).
+**Actual:** `trinity.m1` metrics + pack format; `scripts/eval_milestone1.py`
+(domain acc / macro-F1 / diff exact / ±1 / joint / composite 0.7/0.3);
+`scripts/pack_milestone1.py` writes `submissions/<miner>/m1/`. Supports
+`--baseline majority`, `--features`, or live encode (± attentive pool).
+**Follow-up:** Train script that emits `.npz` for pack; optional M1 leaderboard.
+
+## 2026-07-29 — encode → AttentivePool → TriageHead  #decision
+**Context:** User rejects penultimate-only as improper; wants
+encode→attention→router_head for triage.
+**Actual:** `attention_pool.py`: `AttentivePool` (query attn, zero-init=mean) +
+`AttentiveTriageRouter` / `make_attentive_triage("5-domain"|"20-domain")`.
+`CoordinatorEncoder.encode_sequence()` returns `(H, mask)` for pooling.
+Paper path `encode()` (H[-2]) unchanged for submission.
+**Follow-up:** Train attentive triage on tinyrouter-m1; keep LinearHead on penultimate.
+
+## 2026-07-29 — TriageHead5Domain + TriageHead20Domain  #decision
+**Context:** M1 needs domain+difficulty heads separate from LinearHead (model×role).
+**Actual:** Added `src/trinity/coordinator/triage_head.py` with
+`TriageHead5Domain` (5×1024 + 5×1024) and `TriageHead20Domain` (20×1024 + 5×1024),
+matching Hub configs `5-domain` / `20-domain`. Bias-free dual linear + separate
+softmaxes; `make_triage_head()`. Tests: `tests/test_torch_triage_head.py`.
+**Fix / decision:** Not wired into CMA-ES submission path — supervised CE only.
+**Follow-up:** Train script on `James-Cuda/tinyrouter-m1` + frozen encoder.
+
+## 2026-07-29 — remove obsolete tinyrouter-m1 configs  #decision
+**Context:** After rename to `5-domain` / `20-domain`, Hub still had
+`coarse/`, `fine/`, and flat `data/` shards.
+**Actual:** Deleted those paths from `James-Cuda/tinyrouter-m1`; kept only
+`5-domain/` + `20-domain/` + README. Local `datasets/router-bench` cleaned of
+legacy `data/`/`data2/`/`hub/`/`dataset_dict` build junk (milestones kept).
+**Follow-up:** `router-bench` Hub repo still holds full M1/M2/M3 if needed as source.
+
+## 2026-07-29 — rename configs to 5-domain / 20-domain  #decision
+**Context:** User wants Hub/local names `5-domain` and `20-domain` (not coarse/fine).
+**Actual:** Folders + Hub configs renamed; old `coarse`/`fine` dirs removed locally.
+Load: `load_dataset("James-Cuda/tinyrouter-m1", "5-domain"|"20-domain")`.
+**Follow-up:** Legacy Hub configs `coarse`/`fine` may linger until manually deleted.
+
+## 2026-07-29 — fine = exact GCI-Bench 20 topics  #decision #repro
+**Context:** Custom fine taxonomy was confusing (near-duplicate domains). User
+wants fine **same as GCI-Bench**.
+**Actual:** `fine` is now **only** Glint GCI-Bench rows; `domain` ∈ official 20
+topics (agriculture…wildlife). `coarse` stays 5-way over the full M1 pool
+(~328k). Separate products, not a projection. Hub configs updated on
+`James-Cuda/tinyrouter-m1`.
+**Fix / decision:** Do not force math/code/MMLU into GCI topics — that caused
+confusion. Fine = GCI; coarse = broad router triage.
+**Follow-up:** Train fine head on 5k GCI; coarse head on full pool.
+
+## 2026-07-29 — tinyrouter-m1 split into coarse(5) + fine(20)  #decision #repro
+**Context:** User wants both taxonomies separately to avoid confusing
+near-duplicate fine domains when training a simple router.
+**Actual:** First version projected custom fine→coarse on the same prompts;
+later revised so fine = exact GCI-Bench only (see entry above).
+**Follow-up:** n/a — superseded.
+
+## 2026-07-29 — slim tinyrouter-m1 (20 domains, difficulty 1–5)  #decision #repro
+**Context:** User wants a remade Milestone-1 training set with only
+`id | domain | difficulty | prompt`, closed ~20 Glint-style domains (not the
+raw ~370 Hub labels, not GCI-only niche topics), difficulty integers 1–5.
+**Actual:** Script `scripts/build_tinyrouter_m1_slim.py` remaps
+`router-bench/milestone1` → `datasets/tinyrouter-m1/` (train/test/all parquet +
+README). Domains: math, code, physics, chemistry, biology, medicine, law,
+finance, cs_theory, engineering, history, geography, business, philosophy,
+psychology, commonsense, instruction, truthfulness, general_knowledge,
+lifestyle. Deduped prompts ~328k. Hub: `James-Cuda/tinyrouter-m1` (via `--push`).
+**Fix / decision:** Coarse Hub buckets (`knowledge`/`math`/…) do not override
+source defaults (so `truthfulqa` → `truthfulness`). Fine cues from MMLU
+`domain`/metadata subject, GCI topics, query_complexity, and supra keywords.
+**Follow-up:** Optional `--cap-per-domain` for balance; train domain+difficulty
+head on Qwen3-0.6B features.
+
+## 2026-07-29 — router-bench now three milestones on Hub  #decision #repro
+**Context:** User wants M1 domain+difficulty, M2 model–prompt scoring, M3 live 3×3 API.
+**Actual:** Hub updated. M1 **338,680** (incl. supra + query_complexity), M2 **315,890**,
+M3 live suite **1,319** (math500/aime/humaneval/mbpp/gpqa-diamond). README documents
+the three products. Heavy Hub fetches (legalbench/medmcqa) deferred; light extras optional.
+**Follow-up:** Optional `--heavy` / light fetchers in `scripts/split_three_milestones.py`.
+
+## 2026-07-29 — Added Glint GCI_Bench into milestone1 (20 topic domains)  #decision #repro
+**Context:** User wanted more M1 domains; liked Glint-Research/GCI_Bench’s topic look.
+**Expected:** 5k rows in `milestone1/gci_bench.parquet` with topic as `domain_label`.
+**Actual:** **5,000** rows; `domain_label` = 20 topics; difficulty easy→2 / medium→3 /
+hard→4; prompt = question+context. M1 all = **331,688**. Config `m1_gci_bench`.
+**Fix / decision:** Triage labels only — not Glint’s attention×gradient GCI score.
+GPL-3.0 upstream; we redistribute prompts/labels for eval.
+**Follow-up:** Optional balanced sampling so 20 topics aren’t drowned by mmlu/aqua.
+
+## 2026-07-29 — router-bench split into milestone1 / milestone2  #decision #repro
+**Context:** M1 product is prompt triage (domain + difficulty), not TinyRouter
+`(model, role)`. Flat `data/` + `data2/` mixed triage gold with router dumps.
+**Expected:** Two Hub folders with clear jobs and an updated README.
+**Actual:** `milestone1/` = **326,688** rows (15 clean sources) with
+`domain_label` + `difficulty` (1–5). `milestone2/` = **315,890** rows (6 mixed
+router corpora). Legacy `data/` / `data2/` removed from Hub. Script:
+`scripts/reorganize_router_bench_milestones.py`.
+**Fix / decision:** Default config → `milestone1/all`. Load `m1_*` / `m2_*`
+per source. M2 keeps routerbench/sprout/embedllm/llmrouterbench/routereval/mix_instruct.
+**Follow-up:** Train/eval a domain+difficulty head on M1; defer pool routing to M2.
+
+## 2026-07-29 — RouterEval thin index added to data2 (HF_TOKEN retry)  #finding #repro
+**Context:** User exported `HF_TOKEN` and asked to retry Hub work; RouterEval was still deferred.
+**Expected:** Authenticated push of a thin unique-prompt index from `linggm/RouterEval`.
+**Actual:** Final `data2/routereval.parquet` = **28,529** unique prompts
+(arc_challenge, gsm8k, hellaswag, mmlu, truthfulqa, winogrande). Merged `data2/all` =
+**331,001**. Hub config `data2_routereval` live.
+**Root cause / gotcha:** Agent shells do not inherit interactive `export`; push first failed
+with `HF_TOKEN not set`. Tiniest zips (~175 B) are empty; several subsets use a pickle
+schema without `example` (bbh/gpqa/ifeval/math_lv_5/mmlu_pro/musr still 0 after retries).
+**Fix / decision:** `load_routereval()` skips zips &lt;50KB and tries up to 8 candidates;
+token via env for Hub push. Prefer `HF_TOKEN` in `~/.config/trinity/secrets.env`.
+**Follow-up:** Parse alternate pickle keys for the 6 empty RouterEval subsets.
+
+## 2026-07-29 — GPQA gated access retry succeeded; data2 live on Hub  #finding #repro
+**Context:** First `data2` pass skipped GPQA (gated). User asked to retry after Hub access.
+**Expected:** `Idavidrein/gpqa` loads with token; rows land under `data2/gpqa.parquet`.
+**Actual:** **1,192** rows (diamond+main+extended). Hub configs:
+`data2_gpqa` and merged `data2` (`302,472` total; `gpqa` present).
+**Root cause:** Gated dataset requires accepted access + authenticated Hub calls.
+**Fix / decision:** Re-ran GPQA loader + push; left RouterEval out (50k+ detail zips of
+pickle harness dumps — thin prompt index deferred; one zip/`gsm8k` has `example` prompts).
+**Follow-up:** Optional RouterEval thin index (one zip per `full_data/*` subset).
+
+## 2026-07-28 — Milestone-1 `router-bench` corpus built (upload pending HF_TOKEN)  #decision #repro
+**Context:** For TinyRouter Milestone 1 (no-API open router eval) we wanted one Hub dataset
+that unions Glint-style triage sources + standard math/knowledge + Martian RouterBench.
+**Expected:** A single `James-Cuda/router-bench` dataset loadable offline.
+**Actual:** Local build at `datasets/router-bench/` with **311,577** rows
+(dolly 15011, mbpp 427, humaneval 164, aqua_rat 97975, gsm8k 8792, mmlu 115700,
+math500 500, routerbench 73008). Script: `scripts/build_router_bench.py`.
+**Root cause / gotcha:** `hf_hub_download("withmartian/routerbench", ...)` 401'd until
+`repo_type="dataset"` was set (default looks up a *model* repo). RouterBench prompts are
+often list-valued and were flattened; `|model_response` columns omitted to keep parquet ~222MB.
+**Fix / decision:** Unified schema `(id, source, split, prompt, provenance_label, reference,
+domain, metadata_json)`. Hub push gated on `HF_TOKEN` env (never commit tokens; chat-pasted
+tokens must be revoked).
+**Follow-up:** `export HF_TOKEN=...` then
+`python scripts/build_router_bench.py --out datasets/router-bench --push-only`.
+
 ## 2026-07-15 — normalize_decision leaked a raw Role enum, silently inflating novelty to 1.0 on identical routing  #mistake #finding
 **Context:** `src/trinity/novelty.py` is the contributor-facing offline scorer for the novelty term
 (5% of score): it turns two aligned `(agent, role)` decision sequences into a novelty number and is
