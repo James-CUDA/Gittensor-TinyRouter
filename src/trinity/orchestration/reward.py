@@ -502,6 +502,11 @@ def extract_last_number(text: str) -> str | None:
     # comma so the thousands-separator branch below reads it as one number instead
     # of splitting it into "1" and "000".
     text = text.replace("{,}", ",")
+    # Unicode minus U+2212 ("−"), the sign rendered math uses: fold to the ASCII
+    # hyphen so "−3" is extracted as "-3", not as an unsigned "3" — an unsigned
+    # read both fails the true negative reference and MATCHES the sign-flipped
+    # one (false positive). Mirrors the same fold in normalize_math_answer.
+    text = text.replace("−", "-")
     candidates: list[tuple[int, str]] = []
     for _start, end, term in _iter_latex_frac_sqrt_spans(text):
         candidates.append((end, term))
@@ -751,6 +756,13 @@ def normalize_math_answer(ans: str | None) -> str:
     if ans is None:
         return ""
     s = str(ans).strip()
+    # The Unicode minus sign U+2212 ("−") is what rendered math uses for negation,
+    # and models that echo rendered output emit it. Fold it to the ASCII hyphen
+    # BEFORE any other processing: the fraction/number regexes, ``float()``, and
+    # sympy all only know ``-``, so ``\boxed{−3}`` otherwise never equals a plain
+    # ``-3`` (false negative). U+2212 is unambiguously a minus — unlike en/em
+    # dashes, which are left untouched.
+    s = s.replace("−", "-")
     # Detect set/tuple/list shape before delimiters are stripped — otherwise
     # ``(5, 120)`` loses its parens and ``{2, 100}`` loses its braces before the
     # thousands-comma guard can see them (issue #296).
