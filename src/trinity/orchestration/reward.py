@@ -795,6 +795,12 @@ def normalize_math_answer(ans: str | None) -> str:
     # \text{5}/\mathrm{5} already do (otherwise a bold-formatted answer is a false
     # negative against a plain reference).
     s = _unwrap_font_commands(s)
+    # Approximation hedges are presentation, not value: models often box
+    # ``\approx 12`` / ``\sim 3`` for a gold ``12`` / ``3``. Strip the command
+    # (and the Unicode ≈ glyph) so boxed approx-forms grade by the number
+    # (issue #474). Do NOT strip ``\pm`` — that changes the value.
+    s = re.sub(r"\\(?:approx|simeq|sim|thickapprox)(?![a-zA-Z])\s*", "", s)
+    s = s.replace("≈", "")
     s = s.replace(r"\%", "").replace("%", "")
     # Degree symbol in either brace form: ``^\circ`` and ``^{\circ}``. The braced
     # form is common LaTeX and was previously left intact, so ``90^{\circ}`` never
