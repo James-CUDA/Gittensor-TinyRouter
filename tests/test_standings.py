@@ -151,6 +151,32 @@ def test_non_dict_per_benchmark_is_skipped():
     assert [m.miner for m in s.miners] == ["r"]
 
 
+def test_win_with_no_numeric_score_creates_no_phantom_leader():
+    # Regression: a merged win whose per_benchmark is empty (or entirely non-numeric)
+    # must NOT register the miner. Pre-fix, setdefault ran before any numeric score was
+    # confirmed, so such a win produced a phantom MinerStanding(overall=0.0, n_competed=0,
+    # rank=1) that was falsely reported as the standings leader. This must match the
+    # non-dict per_benchmark case, which drops the record entirely.
+    lb = _lb([
+        {"miner": "ghost", "merged": True, "per_benchmark": {}, "pr": 1,
+         "score": 0.0, "generation": 1, "timestamp": "2026-07-13T00:00:00Z"},
+        {"miner": "nul", "merged": True, "per_benchmark": {"math500": None, "mmlu": "x"},
+         "pr": 2, "score": 0.0, "generation": 1, "timestamp": "2026-07-13T00:00:00Z"},
+    ])
+    s = compute_standings(lb)
+    assert s.miners == []                                   # neither win registers a miner
+    assert s.leader is None                                 # no phantom leader
+
+    # And a phantom win must not shadow a real one: only the scored miner ranks/leads.
+    lb2 = _lb([
+        {"miner": "ghost", "merged": True, "per_benchmark": {}, "pr": 1,
+         "score": 0.0, "generation": 1, "timestamp": "2026-07-13T00:00:00Z"},
+        _win("real", {"math500": 0.7, "mmlu": 0.8}, 2),
+    ])
+    s2 = compute_standings(lb2)
+    assert [m.miner for m in s2.miners] == ["real"] and s2.leader == "real"
+
+
 # --------------------------------------------------------------------------- #
 # load + render
 # --------------------------------------------------------------------------- #
