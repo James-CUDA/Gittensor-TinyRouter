@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -18,6 +19,7 @@ from trinity.adapters.swebench_runner import (
     PatchEvalResult,
     evaluate_patch,
     extract_patch,
+    run_tests,
     score_swebench,
 )
 
@@ -241,3 +243,29 @@ def test_adapter_defaults_to_exact_match_placeholder():
     ref = {"gold_patch": "diff --git a/x b/x\n+fix\n"}
     assert adapter.score_output("diff --git a/x b/x\n+fix\n", ref) == 1.0
     assert adapter.score_output("diff --git a/x b/x\n+nope\n", ref) == 0.0
+
+
+# --------------------------------------------------------------------------- #
+# run_tests: the grading subprocess must use the current interpreter
+# --------------------------------------------------------------------------- #
+def test_run_tests_uses_sys_executable_not_bare_python(monkeypatch):
+    # Regression: run_tests must launch the grading pytest via the *current*
+    # interpreter (sys.executable), never a bare "python". On hosts where
+    # "python" is absent from PATH (only "python3"), or resolves to an interpreter
+    # without pytest, the bare form raised FileNotFoundError -> (False, ...), so
+    # evaluate_patch graded every candidate -- even a correct, issue-resolving
+    # patch -- as 0.0 (silent false negatives across SWE-bench scoring).
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    passed, _ = run_tests(".", ["test_x.py::test_y"])
+
+    argv = captured["cmd"]
+    assert argv[0] == sys.executable
+    assert argv[0] != "python"
+    assert argv[1:3] == ["-m", "pytest"]
+    assert passed is True

@@ -25,6 +25,7 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import sys
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -129,7 +130,7 @@ def run_tests(
         return False, "no tests specified"
     try:
         proc = subprocess.run(
-            ["python", "-m", "pytest", "-p", "no:cacheprovider", "-q", "--no-header",
+            [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q", "--no-header",
              "--tb=no", *node_ids],
             cwd=str(repo_dir),
             capture_output=True,
