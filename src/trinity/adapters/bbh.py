@@ -165,21 +165,53 @@ def _final_answer_segment(text: str) -> str:
 #: compared as a sequence, not treated as strippable formatting noise.
 _BRACKETS = frozenset("()[]{}<>")
 
+#: Markdown emphasis wrapping the WHOLE answer — ``**True**``, ``*valid*``, ``__no__``.
+#: The SAME marker is required on both sides (backreference), so an asymmetric ``*``
+#: that is part of content is never peeled. Mirrors the Markdown tolerance the shared
+#: choice extractor already has (``reward._strip_choice_md_emphasis``): bolding the
+#: final answer is a very common model format, and the multiple-choice half of this
+#: adapter accepts ``Answer: **B**`` while the exact-match half rejected
+#: ``Answer: **True**`` — an inconsistent false negative inside one adapter.
+_MD_EMPHASIS_WRAP_RE = re.compile(r"(\*{1,3}|_{1,3}|`)(.+?)\1", re.DOTALL)
+
+
+def _strip_md_emphasis_wrap(s: str) -> str:
+    """Peel Markdown emphasis markers that wrap the entire (stripped) answer.
+
+    Applied repeatedly so nested wrappers (``**_True_**``) fully collapse. Only a
+    full-string wrap is unwrapped — emphasis on an inner word of a longer answer is
+    left untouched (it is then neutralised as punctuation by the caller's strip).
+    """
+    prev = None
+    while prev != s:
+        prev = s
+        m = _MD_EMPHASIS_WRAP_RE.fullmatch(s.strip())
+        if m:
+            s = m.group(2).strip()
+    return s
+
 
 def _normalize_exact(text: str) -> str:
     """Normalise a free-form answer for tolerant exact comparison.
 
-    Lower-cases, strips surrounding quotes/brackets/terminal punctuation, and collapses
-    internal whitespace — only formatting noise, never content. A **pure bracket sequence**
-    is the exception: the ``dyck_languages`` gold target is all closing brackets (e.g.
-    ``"] )"``), so it is compared whitespace-insensitively rather than stripped down to an
-    empty string — which made every dyck answer, correct or not, grade ``0.0``.
+    Lower-cases, strips surrounding quotes/brackets/terminal punctuation and Markdown
+    emphasis (``**True**`` == ``True``), and collapses internal whitespace — only
+    formatting noise, never content. A **pure bracket sequence** is the exception: the
+    ``dyck_languages`` gold target is all closing brackets (e.g. ``"] )"``), so it is
+    compared whitespace-insensitively rather than stripped down to an empty string —
+    which made every dyck answer, correct or not, grade ``0.0``.
     """
     s = str(text).strip().lower()
+    # Peel whole-answer emphasis BEFORE the bracket check so a bolded dyck answer
+    # (``**] )**``) still reaches the bracket-sequence comparison.
+    s = _strip_md_emphasis_wrap(s)
     compact = re.sub(r"\s+", "", s)
     if compact and all(ch in _BRACKETS for ch in compact):
         return compact
     s = s.strip(".\"'`()[]{} \t\n")
+    # Emphasis may sit INSIDE terminal punctuation ("**true**."): the strip above
+    # exposes it, so peel once more.
+    s = _strip_md_emphasis_wrap(s)
     s = re.sub(r"\s+", " ", s)
     return s
 
