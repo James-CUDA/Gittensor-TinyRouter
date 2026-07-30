@@ -43,12 +43,21 @@ Gittensor-TinyRouter/
 │
 ├── src/trinity/                    THE FRAMEWORK
 │   ├── coordinator/                Routing engine
-│   │   ├── slm.py                  Frozen Qwen3-0.6B encoder
-│   │   ├── head.py                 Linear routing head (6×1024)
+│   │   ├── slm.py                  Frozen Qwen3-0.6B encoder (+ encode_sequence)
+│   │   ├── head.py                 Linear routing head (6×1024) — live M3
+│   │   ├── triage_head.py          Domain+difficulty TriageHead — M1
+│   │   ├── attention_pool.py       Optional encode→attention→head (M1)
 │   │   ├── svf.py                  SVF adapter (layer 26)
 │   │   ├── policy.py               CoordinatorPolicy (encoder + SVF + head)
 │   │   ├── params.py               θ pack/unpack (head + SVF ↔ flat vector)
 │   │   └── warmstart.py            Supervised warm-start for the head
+│   │
+│   ├── m1/                         Milestone-1 offline triage competition
+│   │   ├── pack.py                 Miner pack (W_domain / W_diff / …)
+│   │   ├── gates.py                <1M params, 1/day, weight sanity
+│   │   ├── leaderboard.py          King / challenger promote
+│   │   ├── metrics.py / scoring.py Eval metrics + pack scoring
+│   │   └── domains.py              5-domain + 20-domain (GCI) labels
 │   │
 │   ├── adapters/                   Benchmark adapters (the eval seam)
 │   │   ├── base.py                 BenchmarkAdapter ABC + TaskType
@@ -111,12 +120,15 @@ Gittensor-TinyRouter/
 │   └── types.py                    Shared dataclasses (Task, Trajectory, etc.)
 │
 ├── scripts/                        Maintainer + miner tools
-│   ├── pr_eval.py                  PR evaluation (all gates + scoring)
-│   ├── build_benchmark.py          Hidden benchmark builder (encrypted)
-│   ├── pack_submission.py          Pack a trained head for submission
-│   ├── preflight_submission.py     Offline preflight checker
-│   ├── oracle_ceiling.py           Oracle ceiling diagnostic
-│   ├── verify_benchmark.py         Hidden benchmark integrity verifier
+│   ├── pack_milestone1.py          M1: pack triage head weights
+│   ├── preflight_milestone1.py     M1: <1M / 1-day / weight gates
+│   ├── eval_milestone1.py          M1: score a pack or baseline
+│   ├── validate_milestone1.py      M1: king vs challenger → merge?
+│   ├── build_tinyrouter_m1_slim.py Rebuild Hub 5-domain / 20-domain
+│   ├── pr_eval.py                  Live PR evaluation (gates + scoring)
+│   ├── pack_submission.py          Live: pack routing head + SVF
+│   ├── preflight_submission.py     Live offline preflight
+│   ├── legacy/                     Older router-bench Hub one-shots
 │   └── ...                         Report generators, analysis tools
 │
 ├── baselines/                      Reference baselines (what to beat)

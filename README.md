@@ -11,12 +11,36 @@
   [![CI](https://github.com/James-CUDA/Gittensor-TinyRouter/actions/workflows/ci.yml/badge.svg?style=for-the-badge)](https://github.com/James-CUDA/Gittensor-TinyRouter/actions)
   [![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](LICENSE)
   
-  [Submit a head](SUBMITTING.md) · [Rules](docs/COMPETITION_RULES.md) · [How scoring works](docs/EVALUATION_PIPELINE.md) · [Leaderboard](leaderboard.json)
+  [Milestone 1](docs/MILESTONE1.md) · [Submit (live)](SUBMITTING.md) · [Rules](docs/COMPETITION_RULES.md) · [Scoring](docs/EVALUATION_PIPELINE.md) · [Leaderboard](leaderboard.json)
 </div>
 
 ---
 
-## The challenge
+## Three milestones
+
+Start offline, then compete live:
+
+| Milestone | Goal | API? | Dataset / docs |
+| --- | --- | --- | --- |
+| **1 — Prompt triage** | Predict **domain** + **difficulty** | No | [`tinyrouter-m1`](https://huggingface.co/datasets/James-Cuda/tinyrouter-m1) · [`docs/MILESTONE1.md`](docs/MILESTONE1.md) |
+| **2 — Model routing** | Pick a model from cached router corpora | No | `James-Cuda/router-bench` milestone2 |
+| **3 — Live TinyRouter** | Route **3 models × 3 roles**; beat the king → **TAO** | Yes | [`SUBMITTING.md`](SUBMITTING.md) |
+
+**Milestone 1 (current offline track):** miners submit **head + weights only** (under 1M params, 1/day). Host encoder is frozen Qwen3-0.6B. Validator scores king vs challenger on a fixed test set; merge if challenger ≥ king + **0.02**.
+
+```bash
+# Pack → preflight → (host) validate
+python scripts/pack_milestone1.py --miner-name alice --config 5-domain --weights head.npz
+python scripts/preflight_milestone1.py --submission submissions/alice/m1 --miner-name alice
+python scripts/validate_milestone1.py \
+  --challenger submissions/alice/m1 --miner-name alice --config 5-domain --promote
+```
+
+Default head: `TriageHead` (± attentive pool). See [`docs/MILESTONE1.md`](docs/MILESTONE1.md).
+
+---
+
+## The challenge (Milestone 3 — live)
 
 Three models. Three benchmarks. One tiny head.
 
@@ -129,20 +153,22 @@ python scripts/oracle_ceiling.py --analyze experiments/final/oracle_matrix_math5
 
 | 📖 | Document | For |
 |---|---|---|
+| 1️⃣ | [`MILESTONE1.md`](docs/MILESTONE1.md) | Offline triage: pack, gates, king vs challenger |
 | 📋 | [`COMPETITION_RULES.md`](docs/COMPETITION_RULES.md) | What you can/can't do, frozen files, cheating criteria |
-| ⚙️ | [`EVALUATION_PIPELINE.md`](docs/EVALUATION_PIPELINE.md) | How every score is calculated (every stage) |
+| ⚙️ | [`EVALUATION_PIPELINE.md`](docs/EVALUATION_PIPELINE.md) | How every live score is calculated |
 | 🏗️ | [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Repo structure, design principles, subsystem map |
-| 🚀 | [`REPRODUCTION_GUIDE.md`](docs/REPRODUCTION_GUIDE.md) | 8-step clone-to-submit walkthrough |
-| 📝 | [`SUBMITTING.md`](SUBMITTING.md) | Submission format + PR workflow |
+| 🚀 | [`REPRODUCTION_GUIDE.md`](docs/REPRODUCTION_GUIDE.md) | Clone-to-submit walkthrough (live track) |
+| 📝 | [`SUBMITTING.md`](SUBMITTING.md) | Live routing-head PR workflow + M1 pointer |
 | 📖 | [`docs/GLOSSARY.md`](docs/GLOSSARY.md) | Term definitions |
 
 ## Repository
 
 ```
 src/trinity/
-├── coordinator/          Routing engine (Qwen3-0.6B encoder + 13K head + SVF)
-├── adapters/             Benchmark adapters (9 benchmarks behind one interface)
-├── submission/           Competition gates + leaderboard + anti-cheat
+├── coordinator/          Encoder + LinearHead (live) + TriageHead / AttentivePool (M1)
+├── m1/                   Milestone-1 pack, gates, metrics, leaderboard, scoring
+├── adapters/             Benchmark adapters
+├── submission/           Live competition gates + leaderboard + anti-cheat
 ├── orchestration/        Multi-turn session loop + shared grader
 ├── optim/                Separable CMA-ES trainer + fitness evaluation
 ├── llm/                  OpenRouter client + hash-chain cost ledger
@@ -150,10 +176,11 @@ src/trinity/
 └── fugu/                 Conductor orchestration (Tier 2 — future)
 
 baselines/                Reference baselines (always-model, random-router)
-scripts/                  pr_eval, build_benchmark, pack_submission, ...
+scripts/                  M1 pack/eval/validate · pr_eval · pack_submission · …
+scripts/legacy/           One-shot Hub builders for router-bench history
 configs/                  trinity.yaml (training) + models.yaml (pool)
-tests/                    200+ offline tests
-docs/                     Competition + architecture documentation
+tests/                    Offline tests (incl. M1 gates / triage heads)
+docs/                     Competition + MILESTONE1 + architecture docs
 ```
 
 ## Research

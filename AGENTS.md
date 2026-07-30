@@ -98,25 +98,33 @@ if it were public.
 ```
 trinity/
 ├── AGENTS.md              # this file — goal, rules, logging protocol
-├── README.md              # quickstart
+├── README.md              # quickstart (milestones + live competition)
+├── SUBMITTING.md          # M1 pointer + live routing-head PR workflow
 ├── docs/
-│   ├── SPEC.md            # implementation spec
+│   ├── SPEC.md            # implementation spec (TRINITY paper)
+│   ├── MILESTONE1.md      # offline triage: pack / gates / king vs challenger
 │   ├── JOURNAL.md         # ★ running log of mistakes, findings, decisions (see §6)
 │   └── paper/             # local paper text (gitignored)
 ├── configs/               # models.yaml, trinity.yaml
 ├── src/trinity/
 │   ├── llm/               # OpenRouter client + model-pool abstraction
-│   ├── coordinator/       # 0.6B encoder, hidden-state extraction, ~10K head, policy
+│   ├── coordinator/       # encoder, LinearHead (live), TriageHead / AttentivePool (M1)
+│   ├── m1/                # M1 pack, gates (<1M, 1/day), metrics, leaderboard, scoring
 │   ├── roles/             # Thinker / Worker / Verifier prompt templates
 │   ├── orchestration/     # multi-turn coordination session loop
 │   ├── optim/             # separable CMA-ES trainer + baselines (RL/IL/random)
-│   ├── train.py           # evolutionary training entrypoint
-│   └── eval.py            # benchmark evaluation harness
+│   ├── train.py           # evolutionary training entrypoint (live)
+│   └── eval.py            # benchmark evaluation harness (live)
 ├── benchmarks/            # dataset loaders (LiveCodeBench, math, reasoning, ...)
-├── scripts/               # remote-GPU setup/run helpers (pin GPU 5)
+├── scripts/               # M1 pack/eval/validate + remote-GPU helpers (pin GPU 5)
+│   └── legacy/            # one-shot Hub builders for router-bench history
 ├── experiments/           # run outputs (gitignored)
 └── tests/
 ```
+
+**Milestone 1 (offline):** miners submit triage head weights only; host validates
+king vs challenger on `James-Cuda/tinyrouter-m1`. See `docs/MILESTONE1.md`.
+**Milestone 3 (live):** CMA-ES routing head + OpenRouter pool — unchanged below.
 
 ---
 
@@ -147,7 +155,23 @@ the work — not as an afterthought.
 
 ---
 
-## 7. How to run (filled in as modules land)
+## 7. How to run
+
+### Milestone 1 — triage (no OpenRouter)
+
+```bash
+# rebuild slim Hub dataset (optional)
+python scripts/build_tinyrouter_m1_slim.py
+
+# pack / preflight / validate (encoder ~2–4 GB VRAM; GPU 5 on trinity-gpu)
+python scripts/pack_milestone1.py --miner-name alice --config 5-domain --weights head.npz
+python scripts/preflight_milestone1.py --submission submissions/alice/m1 --miner-name alice
+CUDA_VISIBLE_DEVICES=5 python scripts/validate_milestone1.py \
+  --challenger submissions/alice/m1 --miner-name alice --config 5-domain \
+  --device cuda:0 --promote
+```
+
+### Milestone 3 — live coordinator (OpenRouter)
 
 ```bash
 # 0. load secrets (never committed)
@@ -166,4 +190,4 @@ bash scripts/run_remote.sh train --config configs/trinity.yaml
 bash scripts/run_remote.sh eval --config configs/trinity.yaml
 ```
 
-See `README.md` for setup and `docs/SPEC.md` for the design these commands implement.
+See `README.md`, `docs/MILESTONE1.md`, and `docs/SPEC.md`.

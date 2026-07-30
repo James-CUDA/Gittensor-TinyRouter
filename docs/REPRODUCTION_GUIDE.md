@@ -3,7 +3,16 @@
 > Clone to submission in 30 minutes. Every step is concrete and copy-pasteable.
 > No guessing, no "figure it out."
 
-## Prerequisites
+**Tracks**
+
+| Start here if… | Doc |
+| --- | --- |
+| You want **offline** domain + difficulty triage (no API) | [`MILESTONE1.md`](MILESTONE1.md) |
+| You want the **live** TinyRouter TAO competition | Continue below → [`SUBMITTING.md`](../SUBMITTING.md) |
+
+---
+
+## Prerequisites (live track)
 
 | Requirement | What |
 |---|---|

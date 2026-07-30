@@ -18,6 +18,13 @@ protocol. **Newest entries at the top.** Tag each entry with one or more of:
 
 ---
 
+## 2026-07-30 — docs updated for M1 workflow  #decision
+**Context:** User asked to update md files from current M1 work.
+**Actual:** README (milestones table + M1 commands), SUBMITTING (M1 section),
+AGENTS (layout + M1 run), MILESTONE1 (full guide), REPRODUCTION_GUIDE (track
+pointer), discord-announcement refreshed.
+**Follow-up:** Optional ARCHITECTURE.md deep-link pass.
+
 ## 2026-07-29 — prune M1 clutter before commit  #decision
 **Context:** Clean unnecessary artifacts from the M1 worktree.
 **Actual:** Removed `submissions/demo/` (zero-weight smoke pack). Moved one-shot

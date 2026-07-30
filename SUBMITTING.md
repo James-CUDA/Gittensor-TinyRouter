@@ -1,4 +1,33 @@
-# Submitting a Routing Head
+# Submitting a Head
+
+TinyRouter has **three milestones**. Pick the track that matches your submission.
+
+| Track | What you submit | Earn TAO? | Doc |
+| --- | --- | --- | --- |
+| **Milestone 1** — prompt triage | Domain + difficulty head (under 1M params) | Not yet (offline ladder) | [`docs/MILESTONE1.md`](docs/MILESTONE1.md) |
+| **Milestone 3** — live TinyRouter | 13K routing head (model × role) + SVF | Yes, if you beat the king | Below |
+
+---
+
+## Milestone 1 — prompt triage (offline)
+
+Host runs the frozen encoder; you submit **head + weights only**.
+
+```bash
+python scripts/pack_milestone1.py --miner-name alice --config 5-domain --weights head.npz
+python scripts/preflight_milestone1.py --submission submissions/alice/m1 --miner-name alice
+# Host:
+python scripts/validate_milestone1.py \
+  --challenger submissions/alice/m1 --miner-name alice --config 5-domain --promote
+```
+
+Rules: **under 1,000,000** params · **1 submit/day** · merge if challenger ≥ king + **0.02**.  
+Dataset: [James-Cuda/tinyrouter-m1](https://huggingface.co/datasets/James-Cuda/tinyrouter-m1)  
+Full detail: [`docs/MILESTONE1.md`](docs/MILESTONE1.md).
+
+---
+
+## Milestone 3 — live routing head (TAO)
 
 TinyRouter is a **routing accuracy competition**. Miners train ONE routing head
 across three benchmarks (math500, MMLU, LiveCodeBench), submit it as a PR, and
@@ -8,7 +37,7 @@ is merged.
 **A PR is only merged if the submitted head's composite score beats the current
 king's composite by a margin of ≥ 0.02 (2 percentage points).**
 
-## Overview
+### Overview
 
 ```
   ┌───────────┐     ┌──────────────┐     ┌──────────┐     ┌────────┐
