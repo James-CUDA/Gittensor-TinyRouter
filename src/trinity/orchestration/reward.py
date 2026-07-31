@@ -1099,7 +1099,7 @@ _COMMITTED_ANSWER_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"([a-hj])\s*(?:[\).:}]|(?=\s*$)|(?=\s*[\r\n]))"
         r")"
     ),
-    re.compile(r"\\boxed\s*\{\s*\(?\s*([A-J])\s*\)?\s*\}", re.I),
+    re.compile(r"\\boxed\s*\{\s*\(?\s*([A-J])\s*\.?\s*\)?\s*\}", re.I),
     re.compile(
         r"(?i:\bfinal\s+answer\s*[:=]?\s*\(?\s*)"
         r"(?:"
@@ -1117,6 +1117,10 @@ _COMMITTED_ANSWER_PATTERNS: tuple[re.Pattern[str], ...] = (
 # last match, in priority order, only when no committed-answer pattern matched.
 _FALLBACK_CHOICE_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\boption\s*\(?\s*([A-J])(?![A-Za-z])", re.I),
+    # Fullwidth parens （B） and Chinese "answer is B" (issue #508).
+    re.compile(r"（\s*([A-J])\s*）", re.I),
+    re.compile(r"\[\s*([A-J])\s*\]", re.I),
+    re.compile(r"答案是\s*([A-J])(?![A-Za-z])", re.I),
     re.compile(r"^\s*\(?\s*([A-J])\s*[\).:]", re.M),
 )
 # Kept for anything that referenced the combined set (order = priority).
