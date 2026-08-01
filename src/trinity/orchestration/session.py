@@ -121,14 +121,29 @@ async def run_trajectory(
 
 
 def _final_answer(traj: Trajectory) -> str:
-    """O_τ: prefer the last Worker output; fall back to the last non-verifier output."""
+    """O_τ: prefer the last Worker output; fall back to the last non-verifier output.
+
+    A trajectory whose every turn is a Verifier commits **no** answer: the
+    Verifier's pass-through ``processed_output`` is a critique that routinely
+    *discusses* a letter or number without committing one, and downstream
+    scoring trusts ``final_answer`` whenever it parses
+    (``reward._committed_answer`` checks ``has_answer(final)`` before any
+    role filtering — the turn-scan's "Verifier turns are never eligible" rule
+    cannot save it). Returning the last turn here handed the checker's words
+    to the grader: an all-Verifier trajectory — reachable whenever the policy
+    samples VERIFIER every turn (train-time categorical sampling), and on
+    every query for a Verifier-collapsed head at argmax eval — scored ~1/n_options
+    expected reward on MCQ benchmarks for a run that never produced an answer,
+    corrupting the fitness signal CMA-ES optimizes and inflating eval accuracy.
+    An empty string is the honest O_τ: no non-verifier turn, no committed answer.
+    """
     for t in reversed(traj.turns):
         if t.role == Role.WORKER:
             return t.processed_output
     for t in reversed(traj.turns):
         if t.role != Role.VERIFIER:
             return t.processed_output
-    return traj.turns[-1].processed_output if traj.turns else ""
+    return ""
 
 
 def _filter_supported(fn, kwargs: dict) -> dict:
