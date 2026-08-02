@@ -462,6 +462,16 @@ def _iter_latex_frac_sqrt_spans(text: str) -> list[tuple[int, int, str]]:
             j = cmd_end
             while j < len(text) and text[j] in " \t":
                 j += 1
+            # Optional root index ``[n]`` (``\sqrt[3]{8}``); skip so the radicand
+            # is taken with the whole term instead of as a lone digit (#483).
+            if j < len(text) and text[j] == "[":
+                close_br = text.find("]", j + 1)
+                if close_br == -1:
+                    i = cmd_end
+                    continue
+                j = close_br + 1
+                while j < len(text) and text[j] in " \t":
+                    j += 1
             if j < len(text) and text[j] == "{":
                 close = _scan_balanced_braces(text, j)
                 if close is not None:
@@ -510,7 +520,8 @@ def extract_last_number(text: str) -> str | None:
     brace = r"\{(?:[^{}]|\{[^{}]*\})*\}"
     pattern = re.compile(
         rf"-?\\[dt]?frac(?![a-zA-Z])\s*(?:{brace}\s*{brace}|\d\s*\d)"
-        rf"|-?\d*\s*\\sqrt(?![a-zA-Z])\s*(?:{brace}|[0-9a-zA-Z])"
+        # Optional ``[n]`` index so ``\sqrt[3]{8}`` is one term, not digit ``8``.
+        rf"|-?\d*\s*\\sqrt(?![a-zA-Z])\s*(?:\[[^\]]*\]\s*)?(?:{brace}|[0-9a-zA-Z])"
         r"|-?\d+\s*/\s*-?\d+"
         # Scientific notation BEFORE bare decimals so "1e3" is not read as "3".
         r"|-?(?:\d+(?:\.\d+)?|\.\d+)[eE][+-]?\d+"
@@ -820,6 +831,11 @@ def normalize_math_answer(ans: str | None) -> str:
     # The [dt]? family — \frac, \dfrac and \tfrac — all render the same value.
     s = _unwrap_latex_fractions(s)
     s = re.sub(r"\\[dt]?frac\s*(\d)\s*(\d)", r"\1/\2", s)
+    # Indexed roots BEFORE plain ``\sqrt``: ``\sqrt[3]{8}`` -> ``(8)^(1/(3))`` so
+    # sympy can equate the value to ``2``. Plain ``\sqrt{...}`` folding would leave
+    # the ``[n]`` index behind and still miss the gold (#483).
+    s = re.sub(r"\\sqrt\s*\[([^\]]+)\]\s*\{([^{}]*)\}", r"(\2)^(1/(\1))", s)
+    s = re.sub(r"\\sqrt\s*\[([^\]]+)\]\s*([0-9a-zA-Z])", r"(\2)^(1/(\1))", s)
     # \sqrt{x} -> sqrt(x), and the unbraced single-token \sqrt2 -> sqrt(2). Like the
     # \frac handling just above, the braced and bare forms render the SAME value, so
     # they must normalize identically (else \sqrt{2} is a false negative against a
