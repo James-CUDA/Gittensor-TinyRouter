@@ -265,6 +265,9 @@ def parse_workflow(
     if not model_candidates or not subtask_candidates or not access_candidates:
         return None, False
 
+    # First pass: canonical textual order (model_id, then subtasks, then
+    # access_list). This preserves every historical pairing and still lets a
+    # scratch/reasoning list that precedes the real block be skipped over.
     for m_pos, models in model_candidates:
         for s_pos, subtasks in subtask_candidates:
             if s_pos < m_pos:
@@ -272,6 +275,24 @@ def parse_workflow(
             for a_pos, access in access_candidates:
                 if a_pos < s_pos:
                     continue
+                wf = _validate_workflow_lists(
+                    models, subtasks, access,
+                    n_workers=n_workers, max_steps=max_steps, allow_self=allow_self,
+                )
+                if wf is not None:
+                    return wf, True
+
+    # Second pass: the three lists are disambiguated by name, so a well-formed
+    # proposal that emits them in a non-canonical order is still valid. This
+    # pass runs only when the ordered pass found nothing, and it inspects only
+    # the triples the ordered pass skipped (non-canonical order), so it can
+    # never change an existing pairing -- it can only ADD acceptance for a valid
+    # input the ordered pass rejected. Malformed triples still fail here too.
+    for m_pos, models in model_candidates:
+        for s_pos, subtasks in subtask_candidates:
+            for a_pos, access in access_candidates:
+                if m_pos <= s_pos <= a_pos:
+                    continue  # canonical order -- already tried above
                 wf = _validate_workflow_lists(
                     models, subtasks, access,
                     n_workers=n_workers, max_steps=max_steps, allow_self=allow_self,
