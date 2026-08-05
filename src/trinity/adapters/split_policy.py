@@ -39,10 +39,21 @@ _SPLIT_ALIASES: dict[str, dict[str, str]] = {
         "train": "train",
         "training": "train",
         "test": "train",
+        # ``eval`` and ``validation`` are test-like logical splits (see
+        # ``_TEST_SPLITS``); they must resolve to the same single upstream split as
+        # ``test`` or the load raises on a non-existent split and silently serves the
+        # 2-item toy set.
+        "eval": "train",
+        "validation": "train",
     },
     "swebench_verified": {
         "train": "test",
         "training": "test",
+        # Logical ``test`` passes through to the single upstream ``test`` split;
+        # ``eval`` and ``validation`` are test-like too (``_TEST_SPLITS``) and must
+        # resolve there as well, or the load raises and the toy set is served.
+        "eval": "test",
+        "validation": "test",
     },
     # AIME publishes a single upstream ``train`` split (AI-MO/aimo-validation-aime,
     # Maxwell-Jia/AIME_2024). Logical ``test`` must read it too, or the loader finds no
@@ -53,6 +64,11 @@ _SPLIT_ALIASES: dict[str, dict[str, str]] = {
         "train": "train",
         "training": "train",
         "test": "train",
+        # ``eval`` and ``validation`` are test-like logical splits (``_TEST_SPLITS``);
+        # they must resolve to the same single upstream split as ``test`` or the load
+        # raises and the loader silently serves the 2-item toy set.
+        "eval": "train",
+        "validation": "train",
     },
     # DROP (ucinlp/drop) publishes only ``train`` and ``validation`` — its ``test``
     # set is hidden (leaderboard-only). Logical ``test`` must read ``validation``,
