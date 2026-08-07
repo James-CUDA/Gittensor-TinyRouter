@@ -728,6 +728,55 @@ def _peel_outer_parens(s: str) -> str:
             break
         s = s[1:-1]
     return s
+
+def _unwrap_color_underline(s: str) -> str:
+    """Peel presentation-only ``\\color``/``\\textcolor``/``\\underline`` wrappers.
+
+    These change only appearance, not value — ``\\color{red}{5}`` must equal ``5``
+    (issue #497), same contract as font-command unwrap.
+    """
+    # \textcolor{col}{body} and \color{col}{body}
+    for cmd in ("textcolor", "color"):
+        marker = f"\\{cmd}"
+        idx = 0
+        while True:
+            pos = s.find(marker, idx)
+            if pos == -1:
+                break
+            after = pos + len(marker)
+            if after < len(s) and s[after].isalpha():
+                idx = after
+                continue
+            col = _scan_brace_group(s, after)
+            if col is None:
+                idx = after
+                continue
+            body = _scan_brace_group(s, col[1])
+            if body is None:
+                idx = after
+                continue
+            s = s[:pos] + body[0] + s[body[1]:]
+            idx = pos
+    # \underline{body}
+    marker = "\\underline"
+    idx = 0
+    while True:
+        pos = s.find(marker, idx)
+        if pos == -1:
+            break
+        after = pos + len(marker)
+        if after < len(s) and s[after].isalpha():
+            idx = after
+            continue
+        body = _scan_brace_group(s, after)
+        if body is None:
+            idx = after
+            continue
+        s = s[:pos] + body[0] + s[body[1]:]
+        idx = pos
+    return s
+
+
 def normalize_math_answer(ans: str | None) -> str:
     r"""Normalize a math answer string for robust comparison.
 
@@ -795,6 +844,7 @@ def normalize_math_answer(ans: str | None) -> str:
     # \text{5}/\mathrm{5} already do (otherwise a bold-formatted answer is a false
     # negative against a plain reference).
     s = _unwrap_font_commands(s)
+    s = _unwrap_color_underline(s)
     s = s.replace(r"\%", "").replace("%", "")
     # Degree symbol in either brace form: ``^\circ`` and ``^{\circ}``. The braced
     # form is common LaTeX and was previously left intact, so ``90^{\circ}`` never
