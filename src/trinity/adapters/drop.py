@@ -132,7 +132,7 @@ def _final_answer_segment(text: str) -> str:
 
 #: Surrounding punctuation stripped from a token, EXCLUDING the signs ``+``/``-`` — a
 #: leading sign is part of a number's value, not wrapping noise.
-_STRIP_EDGE = "".join(c for c in string.punctuation if c not in "+-")
+_STRIP_EDGE = "".join(c for c in string.punctuation if c not in "+-.")
 
 
 def _normalize_token(raw: str) -> str:
@@ -157,10 +157,12 @@ def _normalize_token(raw: str) -> str:
     except ValueError:
         pass
     core = raw.strip(_STRIP_EDGE)
-    try:
-        return str(float(core.replace(",", "")))
-    except ValueError:
-        return _PUNCT.sub("", raw)
+    for cand in (core, core.rstrip(".")):
+        try:
+            return str(float(cand.replace(",", "")))
+        except ValueError:
+            continue
+    return _PUNCT.sub("", raw)
 
 
 def _split_internal_hyphens(token: str) -> list[str]:
